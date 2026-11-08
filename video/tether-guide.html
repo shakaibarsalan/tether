@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tether guide video</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=block" rel="stylesheet">
+<style>
+  :root {
+    --bg: #141413; --panel: #1f1e1d; --line: #3a3734; --text: #f5f0e8; --muted: #a8a29a;
+    --accent: #d97757; --green: #34d399; --red: #ef4444; --blue: #1a73e8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1080px; overflow: hidden; background: var(--bg); }
+  body { font-family: Inter, "Segoe UI", sans-serif; color: var(--text); position: relative; }
+  .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+  .accent { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .green { color: var(--green); }
+
+  /* scenes: fade in, hold, fade out */
+  .scene { position: absolute; inset: 0; opacity: 0; animation: life var(--d) linear var(--s) both; }
+  .scene.last { animation-name: lifeEnd; }
+  @keyframes life { 0% { opacity: 0; } 5% { opacity: 1; } 94% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes lifeEnd { 0% { opacity: 0; } 6% { opacity: 1; } 100% { opacity: 1; } }
+
+  /* element entrances */
+  .in { opacity: 0; animation: pop .7s cubic-bezier(.2,.8,.2,1) var(--t) both; }
+  @keyframes pop { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+  .zoom { opacity: 0; animation: zoom .5s cubic-bezier(.2,1.4,.4,1) var(--t) both; }
+  @keyframes zoom { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: scale(1); } }
+  .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .8s ease-out var(--t) both; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .type { display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; width: 0;
+          animation: typing var(--dur) steps(var(--n)) var(--t) both; }
+  @keyframes typing { from { width: 0; } to { width: calc(var(--n) * 1ch); } }
+
+  .abs { position: absolute; }
+  .box { position: absolute; background: var(--panel); border: 2px solid var(--line); border-radius: 22px;
+         padding: 22px 26px; }
+  .box b { display: block; font-size: 34px; font-weight: 700; }
+  .box span { display: block; font-size: 24px; color: var(--muted); margin-top: 6px; }
+  /* cards whose spans stay inline (hosts file, terminal) */
+  .card { position: absolute; background: var(--panel); border: 2px solid var(--line); border-radius: 22px; }
+  .pill { display: inline-flex; align-items: center; gap: 12px; background: #2a2826; border: 2px solid var(--line);
+          border-radius: 999px; padding: 14px 28px; font-size: 30px; font-weight: 600; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; }
+  .h1 { font-size: 76px; font-weight: 800; line-height: 1.08; letter-spacing: -1.5px; }
+  .h2 { font-size: 48px; font-weight: 800; letter-spacing: -.8px; }
+  .cap { font-size: 34px; font-weight: 600; line-height: 1.35; text-align: center; }
+  svg.overlay { position: absolute; inset: 0; width: 1080px; height: 1080px; overflow: visible; }
+
+  /* progress bar */
+  .progress { position: absolute; left: 0; bottom: 0; height: 8px; background: var(--accent); width: 0;
+              animation: grow 51s linear 0s both; }
+  @keyframes grow { to { width: 1080px; } }
+</style>
+</head>
+<body>
+
+<!-- 1. Hook (0 - 5.5s) -->
+<section class="scene" style="--s:0s; --d:5.5s">
+  <div class="abs h1 in" style="--t:.3s; left:90px; top:250px; width:900px">Your Claude account is signed in on another computer.</div>
+  <div class="abs h1 accent in" style="--t:2s; left:90px; top:520px; width:900px">That computer can drive your Chrome.</div>
+  <div class="abs" style="left:90px; top:780px; display:flex; gap:18px">
+    <div class="pill zoom" style="--t:3.1s"><i class="dot" style="background:#ea4335"></i>Gmail</div>
+    <div class="pill zoom" style="--t:3.4s"><i class="dot" style="background:#34a853"></i>Banking</div>
+    <div class="pill zoom" style="--t:3.7s"><i class="dot" style="background:#4285f4"></i>Client dashboards</div>
+  </div>
+</section>
+
+<!-- 2. The problem (5.5 - 14s) -->
+<section class="scene" style="--s:5.5s; --d:8.5s">
+  <div class="abs h2 in" style="--t:5.8s; left:90px; top:90px">How Claude in Chrome connects</div>
+  <div class="box in" style="--t:6.3s; left:60px; top:290px; width:320px"><b>Claude</b><span>your PC</span></div>
+  <div class="box in" style="--t:6.8s; left:60px; top:500px; width:320px; border-color:var(--accent)"><b>Claude</b><span>any other PC on your account</span></div>
+  <div class="abs zoom" style="--t:7.3s; left:430px; top:350px; width:240px; height:240px; border-radius:50%;
+       background:#2a2826; border:2px solid var(--line); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center">
+    <div style="font-size:30px; font-weight:700">Anthropic</div><div style="font-size:24px; color:var(--muted)">browser bridge</div>
+  </div>
+  <div class="box in" style="--t:7.8s; left:740px; top:390px; width:290px"><b>Your Chrome</b><span>Gmail · Bank · …</span></div>
+  <svg class="overlay" viewBox="0 0 1080 1080">
+    <path class="draw" style="--t:8.2s" pathLength="1" d="M384 360 C 410 360, 410 420, 440 430" fill="none" stroke="#a8a29a" stroke-width="5" stroke-linecap="round"/>
+    <path class="draw" style="--t:8.6s" pathLength="1" d="M384 580 C 410 580, 410 520, 440 510" fill="none" stroke="#d97757" stroke-width="5" stroke-linecap="round"/>
+    <path class="draw" style="--t:9.1s" pathLength="1" d="M672 470 L 735 470" fill="none" stroke="#d97757" stroke-width="5" stroke-linecap="round"/>
+  </svg>
+  <div class="abs cap in" style="--t:9.8s; left:90px; top:760px; width:900px">
+    <span class="mono accent">select_browser</span> can pick <u>any</u> browser on your account.<br>No prompt appears in that browser.
+  </div>
+</section>
+
+<!-- 3. Measured (14 - 19.5s) -->
+<section class="scene" style="--s:14s; --d:5.5s">
+  <div class="abs muted in" style="--t:14.2s; left:90px; top:270px; font-size:34px; font-weight:700; letter-spacing:3px">WE MEASURED IT</div>
+  <div class="abs h1 in" style="--t:14.6s; left:90px; top:340px; width:900px">Even Claude on the same PC goes through the bridge.</div>
+  <div class="abs h1 accent in" style="--t:16.4s; left:90px; top:640px; width:900px">One door. The account opens it.</div>
+</section>
+
+<!-- 4. Tether: close the remote door (19.5 - 28s) -->
+<section class="scene" style="--s:19.5s; --d:8.5s">
+  <div class="abs in" style="--t:19.8s; left:90px; top:90px; display:flex; align-items:center; gap:26px">
+    <svg width="104" height="104" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="#1f1e1d" stroke="#3a3734" stroke-width="3"/><rect x="26" y="46" width="64" height="42" rx="6" fill="none" stroke="#f5f0e8" stroke-width="7"/><path d="M16 100h84" stroke="#f5f0e8" stroke-width="7" stroke-linecap="round"/><path d="M90 67c18 0 26 6 26 22" fill="none" stroke="#d97757" stroke-width="7" stroke-linecap="round"/><path d="M106 106v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/><rect x="98" y="104" width="36" height="28" rx="6" fill="#d97757"/><circle cx="116" cy="116" r="4" fill="#1f1e1d"/></svg>
+    <div style="font-size:84px; font-weight:800; letter-spacing:-2px">Tether</div>
+  </div>
+  <div class="abs h2 accent in" style="--t:21s; left:90px; top:250px">1 · Close the remote door</div>
+  <div class="card in" style="--t:21.6s; left:90px; top:345px; width:900px; overflow:hidden">
+    <div class="mono" style="background:#2a2826; padding:14px 26px; font-size:22px; color:var(--muted)">C:\Windows\System32\drivers\etc\hosts</div>
+    <div class="mono" style="padding:30px 26px; font-size:36px; font-weight:700">
+      <span class="type accent" style="--t:22.3s; --dur:1.9s; --n:36">0.0.0.0 bridge.claudeusercontent.com</span>
+    </div>
+  </div>
+  <div class="box in" style="--t:24.6s; left:90px; top:650px; width:340px"><b>Claude</b><span>another PC</span></div>
+  <div class="abs zoom" style="--t:24.9s; left:720px; top:635px; width:190px; height:190px; border-radius:50%; background:#2a2826;
+       border:2px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:30px; font-weight:700">bridge</div>
+  <svg class="overlay" viewBox="0 0 1080 1080">
+    <path class="draw" style="--t:25.3s" pathLength="1" d="M436 720 L 712 720" fill="none" stroke="#a8a29a" stroke-width="5" stroke-linecap="round" stroke-dasharray="1"/>
+    <g class="zoom" style="--t:26.1s; transform-origin:574px 720px">
+      <circle cx="574" cy="720" r="40" fill="#ef4444"/>
+      <path d="M556 702 L592 738 M592 702 L556 738" stroke="#fff" stroke-width="9" stroke-linecap="round"/>
+    </g>
+  </svg>
+  <div class="abs in" style="--t:26.4s; left:90px; top:870px; font-size:36px; font-weight:700; color:var(--red)">Other computers: blocked.</div>
+</section>
+
+<!-- 5. Open a local one (28 - 37s) -->
+<section class="scene" style="--s:28s; --d:9s">
+  <div class="abs h2 accent in" style="--t:28.3s; left:90px; top:90px">2 · Open a local one</div>
+  <div class="box in" style="--t:28.9s; left:50px; top:200px; width:300px"><b>Claude Code</b><span>your PC</span></div>
+  <div class="abs pill mono zoom" style="--t:29.6s; left:398px; top:232px; font-size:26px">127.0.0.1:9222</div>
+  <div class="box in" style="--t:30.2s; left:730px; top:200px; width:300px"><b>Your Chrome</b><span>real tabs & logins</span></div>
+  <svg class="overlay" viewBox="0 0 1080 1080">
+    <path class="draw" style="--t:29.4s" pathLength="1" d="M354 270 L 392 270" fill="none" stroke="#34d399" stroke-width="5" stroke-linecap="round"/>
+    <path class="draw" style="--t:30.0s" pathLength="1" d="M686 270 L 724 270" fill="none" stroke="#34d399" stroke-width="5" stroke-linecap="round"/>
+  </svg>
+  <!-- Chrome-style permission dialog -->
+  <div class="abs in" style="--t:31s; left:170px; top:420px; width:740px; background:#fff; color:#202124; border-radius:18px;
+       padding:34px 38px; box-shadow:0 30px 80px rgba(0,0,0,.55)">
+    <div style="font-size:34px; font-weight:700">Allow remote debugging?</div>
+    <div style="font-size:26px; color:#5f6368; margin-top:12px">Claude Code wants to control this browser.</div>
+    <div style="display:flex; justify-content:flex-end; gap:16px; margin-top:34px">
+      <div style="border:2px solid #dadce0; color:#1a73e8; border-radius:999px; padding:12px 34px; font-size:26px; font-weight:600">Deny</div>
+      <div style="position:relative; background:#1a73e8; color:#fff; border-radius:999px; padding:12px 34px; font-size:26px; font-weight:600">Allow
+        <i class="abs" style="left:50%; top:50%; width:70px; height:70px; margin:-35px 0 0 -35px; border-radius:50%; border:4px solid #1a73e8;
+           opacity:0; animation: ring .6s ease-out 33s both"></i>
+      </div>
+    </div>
+  </div>
+  <svg class="abs" style="left:0; top:0; width:44px; height:44px; animation: cursor 1.3s cubic-bezier(.4,0,.2,1) 31.8s both" viewBox="0 0 24 24">
+    <path d="M3 2l7 19 2.5-7.5L20 11z" fill="#fff" stroke="#202124" stroke-width="1.4" stroke-linejoin="round"/>
+  </svg>
+  <div class="abs zoom" style="--t:33.4s; left:90px; top:730px; font-size:44px; font-weight:800; color:var(--green)">✓ Connected</div>
+  <div class="abs cap in" style="--t:34.1s; left:90px; top:830px; width:900px; text-align:left">Same tabs. Same logins.<br><span class="muted">Never leaves your machine.</span></div>
+</section>
+
+<!-- 6. Install (37 - 45s) -->
+<section class="scene" style="--s:37s; --d:8s">
+  <div class="abs h2 in" style="--t:37.3s; left:70px; top:110px">Install in one command</div>
+  <div class="card in mono" style="--t:37.8s; left:70px; top:230px; width:940px; height:600px; overflow:hidden">
+    <div style="background:#2a2826; padding:16px 24px; display:flex; gap:10px; align-items:center; font-size:20px; color:var(--muted)">
+      <i class="dot" style="background:#ef4444"></i><i class="dot" style="background:#f59e0b"></i><i class="dot" style="background:#34d399"></i>&nbsp; PowerShell
+    </div>
+    <div style="padding:30px 32px; font-size:26px; line-height:2.1">
+      <div><span class="muted">&gt; </span><span class="type" style="--t:38.3s; --dur:1.5s; --n:50">git clone https://github.com/shakaibarsalan/tether</span></div>
+      <div><span class="muted in" style="--t:39.9s">&gt; </span><span class="type" style="--t:40s; --dur:.4s; --n:9">cd tether</span></div>
+      <div><span class="muted in" style="--t:40.5s">&gt; </span><span class="type" style="--t:40.6s; --dur:.6s; --n:13">.\install.ps1</span></div>
+      <div class="green in" style="--t:41.5s">✓ chrome-devtools connected over 127.0.0.1</div>
+      <div class="green in" style="--t:42.1s">✓ bridge.claudeusercontent.com blocked</div>
+      <div class="green in" style="--t:42.7s">✓ 38 tests passing</div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Call to action (45 - 51s) -->
+<section class="scene last" style="--s:45s; --d:6s">
+  <div class="abs zoom" style="--t:45.3s; left:440px; top:190px">
+    <svg width="200" height="200" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="#1f1e1d" stroke="#3a3734" stroke-width="3"/><rect x="26" y="46" width="64" height="42" rx="6" fill="none" stroke="#f5f0e8" stroke-width="7"/><path d="M16 100h84" stroke="#f5f0e8" stroke-width="7" stroke-linecap="round"/><path d="M90 67c18 0 26 6 26 22" fill="none" stroke="#d97757" stroke-width="7" stroke-linecap="round"/><path d="M106 106v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/><rect x="98" y="104" width="36" height="28" rx="6" fill="#d97757"/><circle cx="116" cy="116" r="4" fill="#1f1e1d"/></svg>
+  </div>
+  <div class="abs in" style="--t:45.7s; left:0; top:440px; width:1080px; text-align:center; font-size:104px; font-weight:800; letter-spacing:-3px">Tether</div>
+  <div class="abs in muted" style="--t:46.3s; left:0; top:590px; width:1080px; text-align:center; font-size:36px; font-weight:600">Open source · MIT · Windows</div>
+  <div class="abs in mono accent" style="--t:47s; left:0; top:690px; width:1080px; text-align:center; font-size:38px; font-weight:700">github.com/shakaibarsalan/tether</div>
+  <div class="abs in muted" style="--t:47.8s; left:0; top:930px; width:1080px; text-align:center; font-size:22px">Not affiliated with Anthropic or Google</div>
+</section>
+
+<div class="progress"></div>
+
+<style>
+  @keyframes ring { 0% { opacity: .9; transform: scale(.6); } 100% { opacity: 0; transform: scale(1.8); } }
+  @keyframes cursor { from { transform: translate(980px, 1000px); } to { transform: translate(800px, 600px); } }
+</style>
+</body>
+</html>
