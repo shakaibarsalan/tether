@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Guard state written at runtime
+hooks/chrome-guard-state/
+hooks/chrome-allowed-devices.txt
+
+# Test scratch
+tests/.tmp*/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
