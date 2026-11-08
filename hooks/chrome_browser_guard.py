@@ -213,7 +213,10 @@ def post(payload: dict) -> None:
 
 def main() -> None:
     try:
-        payload = json.load(sys.stdin)
+        # Raw bytes as UTF-8: Windows' default code page would garble or
+        # reject non-English text (Urdu, for example) in a tool's input.
+        raw = sys.stdin.buffer.read().decode("utf-8-sig", errors="replace")
+        payload = json.loads(raw)
     except Exception:
         payload = None
 
