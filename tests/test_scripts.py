@@ -158,5 +158,76 @@ class GuardInstallerTest(unittest.TestCase):
         self.assertIsInstance(fresh["hooks"]["PostToolUse"], list)
 
 
+@unittest.skipUnless(os.name == "nt" and os.path.exists(POWERSHELL), "Windows PowerShell only")
+class CheckScriptTest(unittest.TestCase):
+    EXT = "fcoeoabgfenejglbffodgkkbkcdhcgfn"
+    KNOWN_JS = 'const a="wss://bridge.claudeusercontent.com",b="wss://api.anthropic.com",c="ws://localhost:8765";'
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix=".tmp-check-", dir=os.path.dirname(os.path.abspath(__file__)))
+        self.hosts = os.path.join(self.dir, "hosts")
+        with open(self.hosts, "w", encoding="utf-8") as handle:
+            handle.write(f"0.0.0.0 {BRIDGE}\n:: {BRIDGE}\n")
+        self.chrome = os.path.join(self.dir, "User Data")
+        self.add_version("Default", "1.0.105_0", self.KNOWN_JS)
+        self.settings = os.path.join(self.dir, "settings.json")
+        with open(self.settings, "w", encoding="utf-8") as handle:
+            json.dump({"disableRemoteControl": True}, handle)
+        self.cache = os.path.join(self.dir, "cache.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def add_version(self, profile, version, js):
+        folder = os.path.join(self.chrome, profile, "Extensions", self.EXT, version, "assets")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "service-worker.js"), "w", encoding="utf-8") as handle:
+            handle.write(js)
+
+    def check(self, *extra):
+        return run_script("check.ps1", "-SkipLive", "-HostsFile", self.hosts, "-ChromeUserData", self.chrome,
+                          "-ClaudeSettings", self.settings, "-CacheFile", self.cache, *extra)
+
+    def test_all_good(self):
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("no unknown remote hosts", r.stdout)
+        self.assertIn("Remote Control is disabled", r.stdout)
+
+    def test_new_remote_host_after_an_update_is_flagged(self):
+        self.add_version("Profile 3", "1.0.200_0", self.KNOWN_JS + 'const d="wss://relay.claudeusercontent.com";')
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("relay.claudeusercontent.com", r.stdout)
+        self.assertIn("1.0.200_0", r.stdout)
+
+    def test_missing_block_is_flagged(self):
+        with open(self.hosts, "w", encoding="utf-8") as handle:
+            handle.write("# nothing\n")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("does NOT block", r.stdout)
+
+    def test_hook_mode_is_silent_when_all_is_well(self):
+        r = self.check("-Hook")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_hook_mode_reports_problems_as_json(self):
+        self.add_version("Default", "1.0.201_0", 'x="wss://bridge2.claudeusercontent.com"')
+        r = self.check("-Hook")
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertIn("bridge2.claudeusercontent.com", out["systemMessage"])
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
+
+    def test_scanned_versions_are_cached(self):
+        self.check()
+        with open(self.cache, encoding="utf-8-sig") as handle:
+            cached = json.load(handle)
+        self.assertIn("1.0.105_0", cached)
+        self.assertIn("bridge.claudeusercontent.com", cached["1.0.105_0"])
+
+
 if __name__ == "__main__":
     unittest.main()
