@@ -22,7 +22,7 @@
   html, body { width: 1080px; height: 1080px; overflow: hidden; background: var(--bg); }
   body { font-family: Inter, "Segoe UI", sans-serif; color: var(--text); position: relative; }
   .mono { font-family: "JetBrains Mono", Consolas, monospace; }
-  .accent { color: var(--accent); } .muted { color: var(--muted); }
+  .accent { color: var(--accent); } .muted { color: var(--muted); } .green { color: var(--green); }
   .abs { position: absolute; }
 
   .scene { position: absolute; inset: 0; opacity: 0; animation: life var(--d) linear var(--s) both; }
@@ -36,11 +36,17 @@
   @keyframes zoom { from { opacity: 0; transform: scale(.35); } to { opacity: 1; transform: scale(1); } }
   .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .5s ease-out var(--t) both; }
   @keyframes draw { to { stroke-dashoffset: 0; } }
+  .type { display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; width: 0;
+          animation: typing var(--dur) steps(var(--n)) var(--t) both; }
+  @keyframes typing { from { width: 0; } to { width: calc(var(--n) * 1ch); } }
 
   .h1 { font-size: 82px; font-weight: 800; line-height: 1.06; letter-spacing: -1.8px; }
+  .h2 { font-size: 50px; font-weight: 800; letter-spacing: -.8px; }
   .box { position: absolute; background: var(--panel); border: 2px solid var(--line); border-radius: 22px; padding: 22px 26px; }
   .box b { display: block; font-size: 34px; font-weight: 700; }
   .box small { display: block; font-size: 24px; color: var(--muted); margin-top: 6px; }
+  .card { position: absolute; background: var(--panel); border: 2px solid var(--line); border-radius: 22px; }
+  .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; }
   .badge { position: absolute; width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
   .label { position: absolute; font-size: 28px; font-weight: 700; text-align: center; width: 220px; }
   svg.overlay { position: absolute; inset: 0; width: 1080px; height: 1080px; overflow: visible; }
@@ -64,7 +70,6 @@
 <section class="scene" style="--s:0s; --d:var(--l1)">
   <div class="abs h1 in" style="--t:var(--l0); left:90px; top:80px; width:900px">Claude opened my Gmail.</div>
   <div class="abs h1 accent in" style="--t:calc(var(--l0) + 2s); left:90px; top:270px; width:900px">I didn't ask it to.</div>
-  <!-- browser window -->
   <div class="abs in" style="--t:calc(var(--l0) + .2s); left:90px; top:420px; width:900px; height:400px; background:#202124;
        border-radius:18px; border:2px solid #3c4043; overflow:hidden">
     <div style="height:64px; background:#2b2c2f; display:flex; align-items:flex-end; gap:10px; padding:0 16px">
@@ -88,16 +93,21 @@
 
 <!-- B. "It was Claude on another computer, signed in to my account. Right now, any of them can control your browser." -->
 <section class="scene" style="--s:var(--l1); --d:calc(var(--l2) - var(--l1))">
-  <div class="abs h1 in" style="--t:calc(var(--l1) + .15s); left:90px; top:120px; width:900px">Another computer.<br><span class="accent">Same account.</span></div>
-  <div class="box in" style="--t:calc(var(--l1) + .7s); left:70px; top:430px; width:340px"><b>Claude</b><small>on another computer</small></div>
-  <div class="box in" style="--t:calc(var(--l1) + 1.1s); left:670px; top:430px; width:340px"><b>Your Chrome</b><small>Gmail · Bank · …</small></div>
+  <div class="abs h2 in" style="--t:calc(var(--l1) + .1s); left:90px; top:100px">How Claude in Chrome connects</div>
+  <div class="box in" style="--t:calc(var(--l1) + .5s); left:60px; top:260px; width:320px"><b>Claude</b><small>your PC</small></div>
+  <div class="box in" style="--t:calc(var(--l1) + .9s); left:60px; top:470px; width:320px; border-color:var(--accent)"><b>Claude</b><small>any other PC on your account</small></div>
+  <div class="abs zoom" style="--t:calc(var(--l1) + 1.3s); left:430px; top:320px; width:240px; height:240px; border-radius:50%;
+       background:#2a2826; border:2px solid var(--line); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center">
+    <div style="font-size:30px; font-weight:700">Anthropic</div><div style="font-size:24px; color:var(--muted)">browser bridge</div>
+  </div>
+  <div class="box in" style="--t:calc(var(--l1) + 1.7s); left:740px; top:360px; width:290px"><b>Your Chrome</b><small>Gmail · Bank · …</small></div>
   <svg class="overlay" viewBox="0 0 1080 1080">
-    <path class="draw" style="--t:calc(var(--l1) + 1.5s)" pathLength="1" d="M414 488 L 662 488" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/>
+    <path class="draw" style="--t:calc(var(--l1) + 2s)" pathLength="1" d="M384 330 C 410 330, 410 390, 440 400" fill="none" stroke="#a8a29a" stroke-width="5" stroke-linecap="round"/>
+    <path class="draw" style="--t:calc(var(--l1) + 2.3s)" pathLength="1" d="M384 550 C 410 550, 410 490, 440 480" fill="none" stroke="#d97757" stroke-width="5" stroke-linecap="round"/>
+    <path class="draw" style="--t:calc(var(--l1) + 2.7s)" pathLength="1" d="M672 440 L 735 440" fill="none" stroke="#d97757" stroke-width="5" stroke-linecap="round"/>
   </svg>
-  <div class="abs zoom mono" style="--t:calc(var(--l1) + 1.7s); left:400px; top:440px; width:280px; text-align:center; font-size:26px;
-       font-weight:700; color:var(--accent)">same account</div>
-  <div class="abs in" style="--t:calc(var(--l1) + 3s); left:90px; top:650px; width:900px; font-size:48px; font-weight:800; line-height:1.15">
-    Any Claude on your account<br>can control your browser.</div>
+  <div class="abs in" style="--t:calc(var(--l1) + 3.1s); left:90px; top:690px; width:900px; font-size:46px; font-weight:800; line-height:1.15">
+    Any Claude on your account<br><span class="accent">can control your browser.</span></div>
 </section>
 
 <!-- C. "So I built Tether. Other computers are blocked, and your own Claude still works, with all your tabs and logins." -->
@@ -106,10 +116,8 @@
     <svg width="96" height="96" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="#1f1e1d" stroke="#3a3734" stroke-width="3"/><rect x="26" y="46" width="64" height="42" rx="6" fill="none" stroke="#f5f0e8" stroke-width="7"/><path d="M16 100h84" stroke="#f5f0e8" stroke-width="7" stroke-linecap="round"/><path d="M90 67c18 0 26 6 26 22" fill="none" stroke="#d97757" stroke-width="7" stroke-linecap="round"/><path d="M106 106v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/><rect x="98" y="104" width="36" height="28" rx="6" fill="#d97757"/><circle cx="116" cy="116" r="4" fill="#1f1e1d"/></svg>
     <div style="font-size:84px; font-weight:800; letter-spacing:-2px">Tether</div>
   </div>
-  <!-- row 1: other computers, blocked -->
   <div class="box in" style="--t:calc(var(--l2) + 1s); left:70px; top:300px; width:330px"><b>Other computers</b></div>
   <div class="box in" style="--t:calc(var(--l2) + 1s); left:680px; top:300px; width:330px"><b>Your Chrome</b></div>
-  <!-- row 2: your Claude, still works -->
   <div class="box in" style="--t:calc(var(--l2) + 2.7s); left:70px; top:530px; width:330px"><b>Your Claude</b></div>
   <div class="box in" style="--t:calc(var(--l2) + 2.7s); left:680px; top:530px; width:330px"><b>Your Chrome</b></div>
   <svg class="overlay" viewBox="0 0 1080 1080">
@@ -127,14 +135,31 @@
   <div class="abs in" style="--t:calc(var(--l2) + 4.1s); left:90px; top:740px; font-size:46px; font-weight:800">Same tabs. Same logins.</div>
 </section>
 
-<!-- D. "It's free and open source. Link in the comments." -->
-<section class="scene last" style="--s:var(--l3); --d:calc(var(--total) - var(--l3))">
-  <div class="abs zoom" style="--t:calc(var(--l3) + .15s); left:450px; top:200px">
+<!-- D. "Setup is one command." -->
+<section class="scene" style="--s:var(--l3); --d:calc(var(--l4) - var(--l3))">
+  <div class="abs h2 in" style="--t:calc(var(--l3) + .05s); left:70px; top:110px">Setup is one command</div>
+  <div class="card in mono" style="--t:calc(var(--l3) + .25s); left:70px; top:220px; width:940px; height:480px; overflow:hidden">
+    <div style="background:#2a2826; padding:16px 24px; display:flex; gap:10px; align-items:center; font-size:20px; color:var(--muted)">
+      <i class="dot" style="background:#ef4444"></i><i class="dot" style="background:#f59e0b"></i><i class="dot" style="background:#34d399"></i>&nbsp; PowerShell
+    </div>
+    <div style="padding:30px 32px; font-size:26px; line-height:2.1">
+      <div><span class="muted">&gt; </span><span class="type" style="--t:calc(var(--l3) + .6s); --dur:.9s; --n:50">git clone https://github.com/shakaibarsalan/tether</span></div>
+      <div><span class="muted in" style="--t:calc(var(--l3) + 1.55s)">&gt; </span><span class="type" style="--t:calc(var(--l3) + 1.6s); --dur:.3s; --n:9">cd tether</span></div>
+      <div><span class="muted in" style="--t:calc(var(--l3) + 1.95s)">&gt; </span><span class="type" style="--t:calc(var(--l3) + 2s); --dur:.4s; --n:13">.\install.ps1</span></div>
+      <div class="green in" style="--t:calc(var(--l3) + 2.6s)">✓ chrome-devtools set up, local only</div>
+      <div class="green in" style="--t:calc(var(--l3) + 3s)">✓ Block added: other PCs can't drive Chrome</div>
+    </div>
+  </div>
+</section>
+
+<!-- E. "It's free and open source. Link in the comments." -->
+<section class="scene last" style="--s:var(--l4); --d:calc(var(--total) - var(--l4))">
+  <div class="abs zoom" style="--t:calc(var(--l4) + .15s); left:450px; top:200px">
     <svg width="180" height="180" viewBox="0 0 160 160"><rect width="160" height="160" rx="36" fill="#1f1e1d" stroke="#3a3734" stroke-width="3"/><rect x="26" y="46" width="64" height="42" rx="6" fill="none" stroke="#f5f0e8" stroke-width="7"/><path d="M16 100h84" stroke="#f5f0e8" stroke-width="7" stroke-linecap="round"/><path d="M90 67c18 0 26 6 26 22" fill="none" stroke="#d97757" stroke-width="7" stroke-linecap="round"/><path d="M106 106v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/><rect x="98" y="104" width="36" height="28" rx="6" fill="#d97757"/><circle cx="116" cy="116" r="4" fill="#1f1e1d"/></svg>
   </div>
-  <div class="abs in" style="--t:calc(var(--l3) + .35s); left:0; top:410px; width:1080px; text-align:center; font-size:110px; font-weight:800; letter-spacing:-3px">Tether</div>
-  <div class="abs in muted" style="--t:calc(var(--l3) + .7s); left:0; top:565px; width:1080px; text-align:center; font-size:38px; font-weight:600">Free &amp; open source</div>
-  <div class="abs in mono accent" style="--t:calc(var(--l3) + 1.4s); left:0; top:655px; width:1080px; text-align:center; font-size:38px; font-weight:700">github.com/shakaibarsalan/tether</div>
+  <div class="abs in" style="--t:calc(var(--l4) + .35s); left:0; top:410px; width:1080px; text-align:center; font-size:110px; font-weight:800; letter-spacing:-3px">Tether</div>
+  <div class="abs in muted" style="--t:calc(var(--l4) + .7s); left:0; top:565px; width:1080px; text-align:center; font-size:38px; font-weight:600">Free &amp; open source</div>
+  <div class="abs in mono accent" style="--t:calc(var(--l4) + 1.4s); left:0; top:655px; width:1080px; text-align:center; font-size:38px; font-weight:700">github.com/shakaibarsalan/tether</div>
 </section>
 
 <div class="captions" id="captions"></div>
