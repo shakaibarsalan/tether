@@ -14,3 +14,6 @@ tests/.tmp*/
 Thumbs.db
 .vscode/
 .idea/
+
+# Video build output (audio, frames)
+video/build/
