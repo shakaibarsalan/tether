@@ -90,6 +90,34 @@ Prefer clicking? `Block-Remote.bat` and `Unblock-Remote.bat` do the bridge part 
   powershell -File .\scripts\bridge-block.ps1 -Status
   ```
 
+## Check it's still holding
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+```
+OK    hosts file blocks bridge.claudeusercontent.com
+OK    Chrome was restarted after the block
+OK    extension versions 1.0.102_0, 1.0.104_0, 1.0.105_0: no unknown remote hosts
+OK    Chrome remote debugging is on loopback only (port 9222)
+OK    Remote Control is disabled in Claude Code settings
+```
+
+The important line is the third one. When the extension updates, `check.ps1` scans the new version for remote hosts. A host it hasn't seen before could be a new bridge that the block doesn't cover. Scanned versions are cached, so later runs take a couple of seconds.
+
+**Run it automatically.** Add it as a Claude Code `SessionStart` hook in `~/.claude/settings.json`. It stays silent while everything holds, and warns you (and Claude) at the start of a session when something changes:
+
+```json
+"SessionStart": [
+  { "hooks": [ { "type": "command", "command": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+      "args": ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:/path/to/tether/scripts/check.ps1", "-Hook"],
+      "timeout": 120 } ] }
+]
+```
+
+**On a shared Claude account, also turn off Remote Control.** Otherwise someone on the account can drive your Claude Code session itself. Add `"disableRemoteControl": true` to `~/.claude/settings.json`.
+
 ## Undo
 
 ```powershell
@@ -123,7 +151,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 - **Hooks and MCP servers are Claude Code features.** The Chat and Cowork tabs in the Claude app don't use them.
 - **Chrome has to be running** for `--autoConnect`, and it asks **Allow?** once per new session.
 - **A VPN or proxy that resolves DNS itself** can bypass the hosts file.
-- **Anthropic can change how the extension connects.** If they add per-device approval, you may not need the block at all.
+- **Anthropic can change how the extension connects.** `check.ps1` flags new remote hosts after an update. If they add per-device approval, you may not need the block at all.
 
 ## Tests
 
@@ -131,7 +159,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-38 tests. The same 13 rules run against both guards, plus the bridge block and the guard installer, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+44 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer and the check script, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
 
 ## License
 
