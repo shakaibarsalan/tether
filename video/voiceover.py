@@ -1,0 +1,132 @@
+"""Build the guide video's audio: Kokoro voice-over plus a few soft UI sounds.
+
+    python video/voiceover.py
+
+Writes video/build/audio.wav (git-ignored), video/timeline.json and
+video/timeline.js. The HTML loads timeline.js, so every scene and subtitle starts
+exactly when its line is spoken. Needs
+kokoro-onnx, soundfile and numpy, and the Kokoro model files (set KOKORO_MODEL
+and KOKORO_VOICES, or keep them in ~/.cache/hyperframes/tts).
+"""
+
+import json
+import os
+
+import numpy as np
+import soundfile as sf
+from kokoro_onnx import Kokoro
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BUILD = os.path.join(HERE, "build")
+CACHE = os.path.join(os.path.expanduser("~"), ".cache", "hyperframes", "tts")
+MODEL = os.environ.get("KOKORO_MODEL", os.path.join(CACHE, "models", "kokoro-v1.0.onnx"))
+VOICES = os.environ.get("KOKORO_VOICES", os.path.join(CACHE, "voices", "voices-v1.0.bin"))
+VOICE, SPEED = "am_liam", 1.05
+SR = 24000
+
+LEAD_IN = 0.4   # silence before the first line
+GAP = 0.45      # pause between lines
+TAIL = 1.6      # hold on the last scene after the voice ends
+
+# One entry per scene; each is split into subtitle chunks (LinkedIn autoplays muted).
+LINES = [
+    ["Claude opened my Gmail in Chrome.", "I didn't ask it to."],
+    ["It was Claude on another computer, signed in to my account.", "Right now, any of them can control your browser."],
+    ["So I built Tether.", "Other computers are blocked,", "and your own Claude still works, with all your tabs and logins."],
+    ["It's free and open source.", "Link in the comments."],
+]
+
+# Sound cues: (line index, seconds after that line starts, sound). Kept to four, all quiet.
+CUES = [
+    (0, 0.9, "ding"),     # the Gmail tab pops up
+    (2, 2.0, "thunk"),    # red X on the other computer
+    (2, 3.4, "tick"),     # green check on your own Claude
+    (3, 0.15, "pop"),     # logo lands on the last card
+]
+
+
+def envelope(n, attack=0.004, decay=0.25):
+    t = np.arange(n) / SR
+    env = np.minimum(t / attack, 1.0) * np.exp(-t / decay)
+    return env
+
+
+def tone(freqs, length, decay):
+    n = int(SR * length)
+    t = np.arange(n) / SR
+    wave = sum(np.sin(2 * np.pi * f * t) * a for f, a in freqs)
+    return wave * envelope(n, decay=decay)
+
+
+def sound(name):
+    if name == "ding":   # soft notification
+        return 0.16 * tone([(1318.5, 1.0), (2637, 0.25)], 0.6, 0.18)
+    if name == "thunk":  # low, short "no"
+        n = int(SR * 0.22)
+        t = np.arange(n) / SR
+        freq = 170 - 70 * (t / t[-1])
+        wave = np.sin(2 * np.pi * np.cumsum(freq) / SR)
+        return 0.28 * wave * envelope(n, decay=0.07)
+    if name == "tick":   # two quick rising notes
+        a = tone([(880, 1.0)], 0.09, 0.03)
+        b = tone([(1318.5, 1.0)], 0.16, 0.05)
+        return 0.14 * np.concatenate([a, np.zeros(int(SR * 0.02)), b])
+    if name == "pop":    # tiny bubble
+        n = int(SR * 0.09)
+        t = np.arange(n) / SR
+        freq = 420 + 900 * (t / t[-1])
+        return 0.12 * np.sin(2 * np.pi * np.cumsum(freq) / SR) * envelope(n, decay=0.03)
+    raise ValueError(name)
+
+
+def main():
+    os.makedirs(BUILD, exist_ok=True)
+    kokoro = Kokoro(MODEL, VOICES)
+    clips, starts = [], []
+    cursor = LEAD_IN
+    for chunks in LINES:
+        samples, sr = kokoro.create(" ".join(chunks), voice=VOICE, speed=SPEED, lang="en-us")
+        assert sr == SR, sr
+        samples = np.asarray(samples, dtype=np.float32)
+        starts.append(cursor)
+        clips.append(samples)
+        cursor += len(samples) / SR + GAP
+    total = cursor - GAP + TAIL
+
+    track = np.zeros(int(SR * total) + SR, dtype=np.float32)
+    for start, clip in zip(starts, clips):
+        i = int(start * SR)
+        track[i:i + len(clip)] += clip
+    peak = np.max(np.abs(track)) or 1.0
+    track *= 0.89 / peak  # voice peaks around -1 dBFS
+
+    for line, offset, name in CUES:
+        s = sound(name).astype(np.float32)
+        i = int((starts[line] + offset) * SR)
+        track[i:i + len(s)] += s
+
+    track = np.clip(track[: int(SR * total)], -1.0, 1.0)
+    sf.write(os.path.join(BUILD, "audio.wav"), track, SR)
+
+    ends = [s + len(c) / SR for s, c in zip(starts, clips)]
+    lines = []
+    for chunks, start, end in zip(LINES, starts, ends):
+        # Share the spoken time between subtitle chunks by length.
+        weights = [len(c) for c in chunks]
+        t, parts = start, []
+        for text, w in zip(chunks, weights):
+            span = (end - start) * w / sum(weights)
+            parts.append({"text": text, "start": round(t, 2), "end": round(t + span, 2)})
+            t += span
+        lines.append({"start": round(start, 2), "end": round(end, 2), "chunks": parts})
+    timeline = {"total": round(total, 2), "lines": lines}
+    with open(os.path.join(HERE, "timeline.json"), "w", encoding="utf-8") as f:
+        json.dump(timeline, f, indent=2)
+    with open(os.path.join(HERE, "timeline.js"), "w", encoding="utf-8") as f:
+        f.write("// generated by voiceover.py: when each line is spoken, for scenes and subtitles\n")
+        f.write("window.TIMELINE = " + json.dumps(timeline) + ";\n")
+    print(json.dumps({"total": timeline["total"], "starts": [l["start"] for l in lines]}))
+
+
+if __name__ == "__main__":
+    main()
