@@ -33,15 +33,19 @@ LINES = [
     ["Claude opened my Gmail in Chrome.", "I didn't ask it to."],
     ["It was Claude on another computer, signed in to my account.", "Right now, any of them can control your browser."],
     ["So I built Tether.", "Other computers are blocked,", "and your own Claude still works, with all your tabs and logins."],
+    ["Setup is one command."],
     ["It's free and open source.", "Link in the comments."],
 ]
+
+# Extra seconds to hold a scene after its line, so its animation can finish.
+HOLD = {3: 2.4}  # the terminal types its commands after "Setup is one command."
 
 # Sound cues: (line index, seconds after that line starts, sound). Kept to four, all quiet.
 CUES = [
     (0, 0.9, "ding"),     # the Gmail tab pops up
     (2, 2.0, "thunk"),    # red X on the other computer
     (2, 3.4, "tick"),     # green check on your own Claude
-    (3, 0.15, "pop"),     # logo lands on the last card
+    (4, 0.15, "pop"),     # logo lands on the last card
 ]
 
 
@@ -84,13 +88,13 @@ def main():
     kokoro = Kokoro(MODEL, VOICES)
     clips, starts = [], []
     cursor = LEAD_IN
-    for chunks in LINES:
+    for index, chunks in enumerate(LINES):
         samples, sr = kokoro.create(" ".join(chunks), voice=VOICE, speed=SPEED, lang="en-us")
         assert sr == SR, sr
         samples = np.asarray(samples, dtype=np.float32)
         starts.append(cursor)
         clips.append(samples)
-        cursor += len(samples) / SR + GAP
+        cursor += len(samples) / SR + GAP + HOLD.get(index, 0)
     total = cursor - GAP + TAIL
 
     track = np.zeros(int(SR * total) + SR, dtype=np.float32)
