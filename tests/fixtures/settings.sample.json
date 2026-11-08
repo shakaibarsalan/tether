@@ -1,0 +1,38 @@
+{
+  "theme": "dark",
+  "effortLevel": "high",
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(ssh deploy@example.com \"cd /opt/app && git log --oneline -5\")"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["C:/Users/example/.claude/hooks/check.py"],
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "GREETING": "Assalam-o-Alaikum — سلام",
+    "RATIO": "0.85"
+  },
+  "modelSettings": {
+    "claude-sonnet-5": { "effortLevel": "xhigh" }
+  },
+  "autoMode": {
+    "environment": ["**Trusted repo**: example/app — public", "Single entry"]
+  },
+  "maxProseWidth": 100,
+  "showTurnDuration": true
+}
