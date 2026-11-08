@@ -8,7 +8,7 @@
 // hands the frames to ffmpeg.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,7 +17,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const page = path.join(here, 'tether-guide.html');
 const out = path.resolve(process.argv[2] || path.join(here, 'tether-guide.mp4'));
 const FPS = 30;
-const DURATION = 51; // seconds, matches the progress bar in the page
+// Length and audio come from voiceover.py (run it first).
+const DURATION = JSON.parse(readFileSync(path.join(here, 'timeline.json'), 'utf8')).total;
+const audio = path.join(here, 'build', 'audio.wav');
 const SIZE = 1080;
 const PORT = 9333; // not 9222, which your everyday Chrome may be using
 const chrome = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -75,7 +77,7 @@ try {
     requestAnimationFrame(() => requestAnimationFrame(done));
   })`);
 
-  const total = FPS * DURATION;
+  const total = Math.ceil(FPS * DURATION);
   for (let f = 0; f < total; f++) {
     await evaluate(`__seek(${f / FPS})`);
     const { data } = await send('Page.captureScreenshot', {
@@ -90,10 +92,14 @@ try {
   await new Promise((r) => (browser.exitCode !== null ? r() : browser.once('exit', r)));
 }
 
+const withAudio = existsSync(audio);
 execFileSync('ffmpeg', [
   '-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', path.join(frames, 'f%05d.jpg'),
+  // -14 LUFS is the usual loudness for social video, so phones play it at a normal level.
+  ...(withAudio ? ['-i', audio, '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-shortest'] : []),
   '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out,
 ], { stdio: 'inherit' });
+if (!withAudio) console.log('no video/build/audio.wav: rendered without sound (run voiceover.py first)');
 
 for (let i = 0; i < 5; i++) {
   try { rmSync(work, { recursive: true, force: true }); break; } catch { await sleep(500); }
