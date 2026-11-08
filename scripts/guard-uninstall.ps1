@@ -1,11 +1,11 @@
 <#
 Removes the Tether guard hook from this computer.
 
-Usage (in PowerShell, from this folder):
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+Usage (in PowerShell, from the repo folder):
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\guard-uninstall.ps1
 
-It removes only the lock's own entries from Claude Code's settings (after a
-backup) and deletes the lock's files. Everything else is left as it was.
+It removes only the guard's own entries from Claude Code's settings (after a
+backup) and deletes the guard's files. Everything else is left as it was.
 #>
 [CmdletBinding()]
 param(
