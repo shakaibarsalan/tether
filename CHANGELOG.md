@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Check script:** `scripts/check.ps1` verifies the hosts block, that Chrome was restarted after it, that remote debugging is loopback-only, and whether Remote Control is off. It also scans every installed Claude in Chrome version for remote hosts it hasn't seen, and caches what it scanned. `-Hook` makes it a quiet `SessionStart` hook that only speaks up when something changes.
+- **Guide video:** 25 seconds, with a Kokoro voice-over, subtitles and four quiet sounds. `video/voiceover.py` builds the audio and timeline.
+- **Docs:** README explains how to run the check at session start and why to disable Remote Control on shared accounts.
+- **Tests:** 44.
+
 ## 0.1.0 (2026-11-08)
 
 First release.
