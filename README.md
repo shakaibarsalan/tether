@@ -13,7 +13,7 @@ Any Claude session signed in to your account, on any computer, can drive the Chr
 ![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1f1e1d)
 ![Works with Claude Code](https://img.shields.io/badge/works%20with-Claude%20Code-1f1e1d)
 
-▶ [**Watch the 51-second guide**](video/tether-guide.mp4)
+▶ [**Watch the 20-second guide**](video/tether-guide.mp4)
 
 </div>
 
