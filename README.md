@@ -89,6 +89,19 @@ Prefer clicking? `Block-Remote.bat` and `Unblock-Remote.bat` do the bridge part 
   ```powershell
   powershell -File .\scripts\bridge-block.ps1 -Status
   ```
+- **Clicking "Allow?"** Only programs on this computer can bring up that prompt, because the port isn't reachable from the network. Allow it when you've just given Claude a browser task. If it pops up out of nowhere, click Deny. `check.ps1` shows exactly which program is connected.
+
+## See which tab Claude is using
+
+The extension put its tabs in an orange "Claude" group. The DevTools connection doesn't, so Tether can mark them for you: a 🤖 in front of the tab title, a thin orange frame, and a small "🤖 Claude" badge. Clicks and typing are unaffected.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tab-marker.ps1
+```
+
+This adds a hook that, after each browser action Claude takes, marks the tab it just used. `-Undo` removes it.
+
+All your Chrome profiles run in one Chrome, so the DevTools connection can reach the open windows of **every** profile, whatever Claude account you use. The marker shows you where Claude is working.
 
 ## Check it's still holding
 
@@ -101,8 +114,11 @@ OK    hosts file blocks bridge.claudeusercontent.com
 OK    Chrome was restarted after the block
 OK    extension versions 1.0.102_0, 1.0.104_0, 1.0.105_0: no unknown remote hosts
 OK    Chrome remote debugging is on loopback only (port 9222)
+OK    connected to Chrome: chrome-devtools-mcp (pid 37240), started by claude.exe <- claude.exe <- explorer.exe
 OK    Remote Control is disabled in Claude Code settings
 ```
+
+The `connected to Chrome` line answers "who asked for that Allow prompt?". It names every program attached to Chrome's debugging port and what started it. Anything other than chrome-devtools-mcp started by Claude is flagged.
 
 The important line is the third one. When the extension updates, `check.ps1` scans the new version for remote hosts. A host it hasn't seen before could be a new bridge that the block doesn't cover. Scanned versions are cached, so later runs take a couple of seconds.
 
@@ -159,7 +175,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-44 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer and the check script, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+47 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script and the tab-marker installer, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
 
 ## License
 
