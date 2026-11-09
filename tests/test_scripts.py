@@ -229,5 +229,50 @@ class CheckScriptTest(unittest.TestCase):
         self.assertIn("bridge.claudeusercontent.com", cached["1.0.105_0"])
 
 
+@unittest.skipUnless(os.name == "nt" and os.path.exists(POWERSHELL), "Windows PowerShell only")
+class TabMarkerInstallTest(unittest.TestCase):
+    def setUp(self):
+        self.claude = tempfile.mkdtemp(prefix=".tmp-marker-", dir=os.path.dirname(os.path.abspath(__file__)))
+        self.settings = os.path.join(self.claude, "settings.json")
+        shutil.copy(FIXTURE, self.settings)
+        self.original = load(self.settings)
+
+    def tearDown(self):
+        shutil.rmtree(self.claude, ignore_errors=True)
+
+    def markers(self, settings):
+        return [e for e in settings.get("hooks", {}).get("PostToolUse", [])
+                if any(h.get("type") == "mcp_tool" and "__claudeTabMarker" in h.get("input", {}).get("function", "")
+                       for h in e["hooks"])]
+
+    def test_install_adds_one_hook_and_keeps_everything_else(self):
+        r = run_script("tab-marker.ps1", "-ClaudeDir", self.claude)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        after = load(self.settings)
+        found = self.markers(after)
+        self.assertEqual(len(found), 1)
+        hook = found[0]["hooks"][0]
+        self.assertEqual((hook["server"], hook["tool"]), ("chrome-devtools", "evaluate_script"))
+        self.assertNotIn("pageId", hook["input"])
+        self.assertIn("navigate_page", found[0]["matcher"])
+        self.assertNotIn("evaluate_script", found[0]["matcher"])  # never re-trigger itself
+        rest = copy.deepcopy(after)
+        rest["hooks"]["PostToolUse"] = [e for e in rest["hooks"]["PostToolUse"] if e not in found]
+        if not rest["hooks"]["PostToolUse"]:
+            del rest["hooks"]["PostToolUse"]
+        self.assertEqual(rest, self.original)
+
+    def test_reinstall_is_idempotent(self):
+        run_script("tab-marker.ps1", "-ClaudeDir", self.claude)
+        run_script("tab-marker.ps1", "-ClaudeDir", self.claude)
+        self.assertEqual(len(self.markers(load(self.settings))), 1)
+
+    def test_undo_restores_settings(self):
+        run_script("tab-marker.ps1", "-ClaudeDir", self.claude)
+        r = run_script("tab-marker.ps1", "-ClaudeDir", self.claude, "-Undo")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(load(self.settings), self.original)
+
+
 if __name__ == "__main__":
     unittest.main()
