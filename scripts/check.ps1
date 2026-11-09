@@ -118,6 +118,32 @@ if (-not $SkipLive) {
     if (-not $listeners) { Add-Ok 'Chrome remote debugging is not listening' }
     elseif (@($listeners | Where-Object { @('127.0.0.1', '::1') -notcontains $_.LocalAddress }).Count -eq 0) { Add-Ok "Chrome remote debugging is on loopback only (port $port)" }
     else { Add-Problem "Chrome remote debugging listens beyond loopback on port $port. Check how Chrome was started." }
+
+    # 4b. who is connected to it right now
+    if ($port -and $listeners) {
+        $clients = @(Get-NetTCPConnection -RemotePort $port -State Established -ErrorAction SilentlyContinue |
+            Where-Object { @('127.0.0.1', '::1') -contains $_.RemoteAddress })
+        if (-not $clients) { Add-Ok 'nothing is connected to Chrome remote debugging right now' }
+        foreach ($c in $clients) {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)" -ErrorAction SilentlyContinue
+            $chain = @()
+            $cursor = $proc
+            for ($i = 0; $i -lt 4 -and $cursor; $i++) {
+                $cursor = Get-CimInstance Win32_Process -Filter "ProcessId=$($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
+                if ($cursor) { $chain += $cursor.Name }
+            }
+            $what = if ($proc -and $proc.CommandLine -match 'chrome-devtools-mcp') { 'chrome-devtools-mcp' } elseif ($proc) { $proc.Name } else { "pid $($c.OwningProcess)" }
+            $by = if ($chain) { $chain -join ' <- ' } else { 'unknown' }
+            if ($what -eq 'chrome-devtools-mcp' -and ($chain | Where-Object { $_ -match '^claude(\.exe)?$' })) {
+                Add-Ok "connected to Chrome: $what (pid $($c.OwningProcess)), started by $by"
+            } else {
+                Add-Problem "an unknown program is connected to Chrome remote debugging: $what (pid $($c.OwningProcess)), started by $by. If you didn't start it, close Chrome or turn off chrome://inspect/#remote-debugging."
+            }
+        }
+        $outside = @(Get-NetTCPConnection -LocalPort $port -State Established -ErrorAction SilentlyContinue |
+            Where-Object { @('127.0.0.1', '::1') -notcontains $_.RemoteAddress })
+        if ($outside) { Add-Problem "Chrome remote debugging has $($outside.Count) connection(s) from outside this computer." }
+    }
 }
 
 # 5. Remote Control
