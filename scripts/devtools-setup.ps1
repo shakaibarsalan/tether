@@ -72,10 +72,13 @@ if (-not (Test-Path -LiteralPath $entry)) { Stop-With "Installed, but the entry 
 
 Write-Host "Registering the '$Name' MCP server in Claude Code (user scope) ..."
 & $claude.Source mcp remove $Name -s user 2>$null | Out-Null
+# --no-page-id-routing: tools act on the tab Claude last used, so hooks (like
+# tab-marker.ps1) can call them without a numeric page id. Each Claude Code
+# session runs its own server, so sessions still don't share a "current tab".
 & $claude.Source mcp add --scope user $Name `
     -e CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1 CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1 `
     -- ($node.Source -replace '\\', '/') ($entry -replace '\\', '/') `
-    --autoConnect --no-usage-statistics --no-performance-crux `
+    --autoConnect --no-page-id-routing --no-usage-statistics --no-performance-crux `
     --screenshotFormat=jpeg --screenshotMaxWidth=1400 | Out-Null
 if ($LASTEXITCODE -ne 0) { Stop-With 'claude mcp add failed.' }
 
