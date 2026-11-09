@@ -13,7 +13,11 @@ Any Claude session signed in to your account, on any computer, can drive the Chr
 ![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1f1e1d)
 ![Works with Claude Code](https://img.shields.io/badge/works%20with-Claude%20Code-1f1e1d)
 
-▶ [**Watch the 25-second guide**](video/tether-guide.mp4)
+<br>
+
+<a href="video/tether-guide.mp4"><img src="assets/demo.gif" width="600" alt="25-second guide: Claude on another computer reaches your Chrome through Anthropic's browser bridge. Tether blocks other computers, and your own Claude keeps working with the same tabs and logins."></a>
+
+<sub>▶ <a href="video/tether-guide.mp4"><b>Watch with sound</b></a> (25 s)</sub>
 
 </div>
 
