@@ -8,6 +8,8 @@
 
 Any Claude session signed in to your account, on any computer, can drive the Chrome where the Claude extension is signed in. Tether closes that door and gives Claude Code a local-only one, with the same browser, the same tabs and the same logins.
 
+**And it works with any Claude account.** The extension only worked when it was signed in to the same account as your Claude app. With Tether, whichever account you're using, Claude Code drives the Chrome you already have open, with Vercel, DigitalOcean, Hostinger, Gmail and everything else already logged in.
+
 [![tests](https://github.com/shakaibarsalan/tether/actions/workflows/test.yml/badge.svg)](https://github.com/shakaibarsalan/tether/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-d97757.svg)](LICENSE)
 ![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1f1e1d)
@@ -34,6 +36,19 @@ So if your account is signed in anywhere else (an office PC, an old laptop you n
 
 You can't fix this from inside the extension. We measured it: even Claude on the **same** computer talks to the extension through the bridge ([details](docs/how-it-works.md)). There's one door, and the account opens it.
 
+## One browser, any Claude account
+
+Tying the browser to an account causes a second problem. If you use more than one Claude account (work and personal, or a second one for when you hit a usage limit), the browser only follows the account the extension is signed in to.
+
+| | Claude in Chrome | With Tether |
+|---|---|---|
+| **Which Claude account can use the browser** | Only the one the extension is signed in to | Any account you use in Claude Code on this computer |
+| **Switching accounts** (say, after hitting a usage limit) | Sign the extension in again, or keep a Chrome profile for each account | Nothing to do |
+| **Your logins** (Vercel, DigitalOcean, Hostinger, Gmail…) | Only in the profile whose extension matches | Every Chrome profile you have open |
+| **Who else can reach it** | Any Claude session on that account, from any computer | Only programs on this computer, after you click **Allow** |
+
+The connection is local, so it follows the computer, not the account. Sign in to the sites you use once, and every Claude account you switch to can use them.
+
 ## What Tether does
 
 | | |
@@ -41,7 +56,7 @@ You can't fix this from inside the extension. We measured it: even Claude on the
 | **Closes the remote door** | Points `bridge.claudeusercontent.com` at `0.0.0.0` in the Windows hosts file. No other computer can drive your Chrome, whatever account they use. |
 | **Keeps your browser as it is** | The extension stays installed. Your profiles, tabs and logins are untouched. Nothing to re-login. |
 | **Gives Claude Code a local door** | Installs Google's [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) with `--autoConnect`. Claude Code drives your real Chrome over `127.0.0.1`, and Chrome asks **Allow?** for each new session. |
-| **Works across accounts** | Everything lives on the computer, not the account. Switch Claude accounts as often as you like. |
+| **Works with any Claude account** | Everything lives on the computer, not the account. Switch Claude accounts as often as you like, and the browser and all its logins come with you. |
 | **Undoes cleanly** | One script to undo each part. Every change is backed up first. |
 | **Optional guard** | If you keep the bridge open, a Claude Code hook stops *your* Claude from driving anyone else's browser. |
 
