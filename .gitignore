@@ -23,3 +23,6 @@ video/any-account/build/
 node_modules/
 /package.json
 /package-lock.json
+
+# Chrome Web Store package (store/build-zip.ps1)
+dist/
