@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tether feature video: text overlay</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;800&family=JetBrains+Mono:wght@600&display=block" rel="stylesheet">
+<style>
+  /* Transparent 1920x1080 text layer. overlay-render.mjs sets --c0..--c4 (cut times) and
+     --total from timeline.json, then captures it frame by frame. */
+  html, body { margin: 0; width: 1920px; height: 1080px; background: transparent; overflow: hidden; }
+  body { font-family: Inter, "Segoe UI", sans-serif; color: #f5f0e8; }
+  .card { position: absolute; opacity: 0; text-shadow: 0 2px 24px rgba(0,0,0,.55);
+          animation: show var(--len) cubic-bezier(.2,.8,.2,1) var(--from) both; }
+  .card.last { animation-name: showLast; }
+  /* fade + rise in over the first 0.6 s, fade out over the last 0.4 s */
+  @keyframes show { 0% { opacity: 0; transform: translateY(26px); } 9% { opacity: 1; transform: none; } 94% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes showLast { 0% { opacity: 0; transform: translateY(26px); } 9% { opacity: 1; transform: none; } 100% { opacity: 1; } }
+  .label { font-size: 26px; font-weight: 600; letter-spacing: 6px; color: #e8906f; text-transform: uppercase; margin-bottom: 18px; }
+  .head { font-size: 76px; font-weight: 800; line-height: 1.04; letter-spacing: -2px; }
+  .low { left: 120px; bottom: 58px; }
+  .low .head { font-size: 58px; letter-spacing: -1.5px; white-space: nowrap; }
+  .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+</style>
+</head>
+<body>
+  <!-- shots 1-3: one line along the bottom; the laptop / browser fill the centre and top of these shots -->
+  <div class="card low" style="--from: calc(var(--c0) + .4s); --len: calc(var(--c1) - var(--c0) - .75s)">
+    <div class="label">New in Tether</div>
+    <div class="head">One browser. Any Claude account.</div>
+  </div>
+  <div class="card low" style="--from: calc(var(--c1) + .4s); --len: calc(var(--c2) - var(--c1) - .75s)">
+    <div class="label">Before</div>
+    <div class="head">One account per browser.</div>
+  </div>
+  <div class="card low" style="--from: calc(var(--c2) + .4s); --len: calc(var(--c3) - var(--c2) - .75s)">
+    <div class="label">Now</div>
+    <div class="head">Any account. Same Chrome. All your logins.</div>
+  </div>
+  <!-- left side: the camera pulls back from the laptop, so only the left third stays clear the whole shot -->
+  <div class="card last" style="--from: calc(var(--c3) + 1.6s); --len: calc(var(--total) - var(--c3) - 1.6s); left:130px; top:200px">
+    <svg width="120" height="120" viewBox="0 0 160 160" style="filter: drop-shadow(0 6px 24px rgba(0,0,0,.5))"><rect width="160" height="160" rx="36" fill="#1f1e1d" stroke="#3a3734" stroke-width="3"/><rect x="26" y="46" width="64" height="42" rx="6" fill="none" stroke="#f5f0e8" stroke-width="7"/><path d="M16 100h84" stroke="#f5f0e8" stroke-width="7" stroke-linecap="round"/><path d="M90 67c18 0 26 6 26 22" fill="none" stroke="#d97757" stroke-width="7" stroke-linecap="round"/><path d="M106 106v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#d97757" stroke-width="6" stroke-linecap="round"/><rect x="98" y="104" width="36" height="28" rx="6" fill="#d97757"/><circle cx="116" cy="116" r="4" fill="#1f1e1d"/></svg>
+    <div class="head" style="font-size:96px; margin-top:14px">Tether</div>
+    <div style="font-size:30px; font-weight:600; margin-top:10px; color:#d9d2c7">Free &amp; open source</div>
+    <div class="mono" style="font-size:27px; margin-top:12px; color:#e8906f">github.com/shakaibarsalan/tether</div>
+  </div>
+</body>
+</html>

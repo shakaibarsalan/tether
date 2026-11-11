@@ -1,0 +1,25 @@
+{
+  "total": 22.58,
+  "lines": [
+    {
+      "text": "New in Tether. One browser, for every Claude account.",
+      "start": 0.6,
+      "end": 3.57
+    },
+    {
+      "text": "Before, Claude could only use your browser from one account. Switch accounts, and you sign in all over again.",
+      "start": 3.92,
+      "end": 9.76
+    },
+    {
+      "text": "Now, any Claude account on your laptop uses the same Chrome, with all your logins. No more signing in again.",
+      "start": 10.11,
+      "end": 16.3
+    },
+    {
+      "text": "Tether. Free and open source, on GitHub.",
+      "start": 16.65,
+      "end": 19.08
+    }
+  ]
+}
