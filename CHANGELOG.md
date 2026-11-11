@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Broker:** `broker/tether-broker.mjs` holds one DevTools connection to Chrome, so Chrome asks **Allow?** once per Chrome start instead of once per Claude Code session. Sessions connect to it on `ws://127.0.0.1:9333` and get in only if they are chrome-devtools-mcp started by a Claude desktop session whose `claude.exe` and app are both validly signed by Anthropic, PBC; everything else gets 403 and a notification. Each session gets its own browser session (`Target.attachToBrowserTarget`); `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused; requests with an Origin or a foreign Host are refused. One dependency, `ws`, pinned. `scripts/broker-setup.ps1` installs it as a login task and points Claude Code at it (`-Status`, `-Undo`); `install.ps1 -Broker` includes it.
+- **Connect watch:** names the broker ("Tether wants Chrome"), shows the broker's decisions, answers its `-VerifyClientPort` checks, and finds the title of brand-new sessions (no id on the command line) by start time.
+- **Check script:** recognises the broker as a known client.
+- **DevTools setup:** `-Broker` registers chrome-devtools-mcp with `--wsEndpoint` to the broker; skips `npm install` when the pinned version is already there.
+- **Extension:** Claude's cursor style: a slim tilted arrow with a **Claude** tag that rings on a click and settles after a moment; a richer edge glow; a cream status pill.
+- **Tests:** 69, plus `tests/broker-e2e.mjs`.
+
 - **Connect watch:** `scripts/connect-watch.ps1` pops up a Windows notification the moment a program connects to Chrome's debugging port, which is when Chrome shows **Allow?**. It names the Claude Code session behind chrome-devtools-mcp (its title, folder and account folder), flags scripts a session ran itself, and keeps a notification on screen for anything else. Every connection is logged to `%USERPROFILE%\.tether\connect-watch.log`. `scripts/connect-watch-setup.ps1` runs it at every login with no window (Task Scheduler, no admin), with `-Status` and `-Undo`. `install.ps1` and `uninstall.ps1` include it.
 - **Chrome extension:** `extension/` shows which tabs Claude Code is using: an orange **Claude** tab group, an hourglass tab icon that turns into a green ✓ when Claude stops, a breathing orange edge glow, a status pill and an orange cursor that glides to Claude's clicks and typing. Display only: two permissions (`tabGroups`, `storage`), no network, no debugger, top frame only.
 - **Tab-marker hook:** now asks the extension first (`postMessage`, 0.3 s wait for an ack) and falls back to the in-page marker without it. Re-run `scripts\tab-marker.ps1` to update an installed hook.

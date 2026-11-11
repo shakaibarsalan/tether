@@ -15,11 +15,21 @@
   After running this, turn on chrome://inspect/#remote-debugging in Chrome once.
   Chrome then asks "Allow?" each time a new Claude Code session connects.
 
+  With -Broker, sessions connect to the Tether broker instead of to Chrome
+  (broker-setup.ps1 does this). Chrome then asks once, for the broker, and the
+  broker lets signed Claude desktop sessions in without asking.
+
 .PARAMETER Version
   chrome-devtools-mcp version to install. Pinned on purpose.
 
 .PARAMETER Name
   Name of the MCP server in Claude Code.
+
+.PARAMETER Broker
+  Register it with --wsEndpoint pointing at the Tether broker, not --autoConnect.
+
+.PARAMETER BrokerPort
+  The broker's port.
 
 .PARAMETER Undo
   Unregister the MCP server and uninstall the npm package.
@@ -28,6 +38,8 @@
 param(
     [string]$Version = '1.12.0',
     [string]$Name = 'chrome-devtools',
+    [switch]$Broker,
+    [int]$BrokerPort = 9333,
     [switch]$Undo
 )
 
@@ -62,13 +74,20 @@ if ($chromeVersion -and $chromeVersion.Major -lt 144) {
     Stop-With "Chrome $chromeVersion is too old for --autoConnect. Update Chrome to 144 or newer."
 }
 
-Write-Host "Installing chrome-devtools-mcp@$Version ..."
-& npm install -g "chrome-devtools-mcp@$Version" | Out-Null
-if ($LASTEXITCODE -ne 0) { Stop-With 'npm install failed.' }
-
 $npmRoot = (& npm root -g).Trim()
+$installed = $null
+try { $installed = (Get-Content -LiteralPath (Join-Path $npmRoot 'chrome-devtools-mcp\package.json') -Raw | ConvertFrom-Json).version } catch {}
+if ($installed -eq $Version) {
+    Write-Host "chrome-devtools-mcp@$Version is already installed."
+} else {
+    Write-Host "Installing chrome-devtools-mcp@$Version ..."
+    & npm install -g "chrome-devtools-mcp@$Version" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-With 'npm install failed.' }
+}
+
 $entry = Join-Path $npmRoot 'chrome-devtools-mcp\build\src\bin\chrome-devtools-mcp.js'
 if (-not (Test-Path -LiteralPath $entry)) { Stop-With "Installed, but the entry file is missing: $entry" }
+$connect = if ($Broker) { "--wsEndpoint=ws://127.0.0.1:$BrokerPort/devtools/browser/tether" } else { '--autoConnect' }
 
 Write-Host "Registering the '$Name' MCP server in Claude Code (user scope) ..."
 & $claude.Source mcp remove $Name -s user 2>$null | Out-Null
@@ -78,9 +97,15 @@ Write-Host "Registering the '$Name' MCP server in Claude Code (user scope) ..."
 & $claude.Source mcp add --scope user $Name `
     -e CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1 CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1 `
     -- ($node.Source -replace '\\', '/') ($entry -replace '\\', '/') `
-    --autoConnect --no-page-id-routing --no-usage-statistics --no-performance-crux `
+    $connect --no-page-id-routing --no-usage-statistics --no-performance-crux `
     --screenshotFormat=jpeg --screenshotMaxWidth=1400 | Out-Null
 if ($LASTEXITCODE -ne 0) { Stop-With 'claude mcp add failed.' }
+
+if ($Broker) {
+    Write-Host "Done. New Claude Code sessions connect through the Tether broker (port $BrokerPort)." -ForegroundColor Green
+    Write-Host 'Sessions that are already open keep the old setting until you start them again.'
+    exit 0
+}
 
 Write-Host ''
 Write-Host 'Done. Two steps left, once:' -ForegroundColor Green

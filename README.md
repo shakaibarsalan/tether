@@ -134,7 +134,7 @@ The `extension` folder brings back the look Claude in Chrome had, without its re
 - the tab joins an orange **Claude** tab group;
 - the tab icon is an hourglass while Claude works and a green ✓ when it's done;
 - a soft orange glow breathes around the page, and a **Claude is working** pill sits at the bottom;
-- an orange cursor glides to where Claude clicks or types.
+- an orange cursor with a **Claude** tag glides to where Claude clicks or types, and rings on a click.
 
 It only shows things. It has no network access and can't drive the browser. With it installed, the tab-marker hook hands over to it; without it, the hook keeps drawing the in-page marker. Load it from `chrome://extensions` (Developer mode → **Load unpacked** → the `extension` folder). [extension/README.md](extension/README.md) explains how it works, file by file.
 
@@ -159,6 +159,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\connect-watch-setu
 ```
 
 It's a Task Scheduler task for your user, started at login with no window. It only reads: open connections, process names and the session titles the Claude app keeps. Every connection is logged to `%USERPROFILE%\.tether\connect-watch.log`. `scripts\connect-watch.ps1 -Once` lists what's connected right now.
+
+## Allow once per Chrome start: the broker
+
+Clicking **Allow?** for every Claude Code session gets old, and a prompt you click without reading protects nothing. The broker (`broker/tether-broker.mjs`) connects to Chrome **once**: you click Allow when Chrome starts ("Tether wants Chrome"), and that's it until Chrome closes. Claude Code sessions connect to the broker at `ws://127.0.0.1:9333` instead, and it checks each one before letting it in:
+
+1. the program is **chrome-devtools-mcp**;
+2. it was started by **Claude Code** (`claude.exe`) whose Authenticode signature is valid and from **Anthropic, PBC**;
+3. that `claude.exe` was started by the **Claude desktop app**, also validly signed by Anthropic.
+
+Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`. Either way you get a notification: **Claude is using Chrome: *session title*** or **Tether blocked *program* from Chrome**.
+
+Inside the one connection each session gets its own browser session (`Target.attachToBrowserTarget`), so its commands and events stay its own and a session that closes never disturbs another. `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused. The broker listens on 127.0.0.1 only and refuses requests with an `Origin` header or a foreign `Host`. Signature checks on the few-hundred-MB `claude.exe` take seconds, so the broker keeps each answer in memory for as long as the file's size and time stay the same.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1          # install, start at login, point Claude Code at it
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1 -Status  # Chrome connected? which sessions are in?
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1 -Undo    # back to Allow? per session
+```
+
+Sessions that were already open keep connecting straight to Chrome until you start them again. Chrome's "being controlled by automated test software" bar stays while the broker is connected; close it with ✕ (don't click "Turn off in settings", that turns remote debugging off). Log: `%USERPROFILE%\.tether\broker.log`.
+
+**What it trusts.** Anything running as you could already start a signed Claude Code session with your login, or read Chrome's files directly, so the broker doesn't try to stop malware that owns your account. What it stops is the common case Chrome's prompt was for: some other program on your computer quietly using your logged-in Chrome.
 
 ## Check it's still holding
 
@@ -197,7 +219,7 @@ The important line is the third one. When the extension updates, `check.ps1` sca
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-This removes the DevTools server, the connect watch and the bridge block. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
+This removes the broker, the DevTools server, the connect watch and the bridge block. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
 
 ## Optional: the guard hook
 
@@ -222,7 +244,9 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 - **Windows only for now.** The same idea works on macOS and Linux (hosts file plus `--autoConnect`). PRs welcome.
 - **Claude in Chrome stops working** while the bridge is blocked, for everyone including you. That's the point. Browser work moves to the DevTools tools.
 - **Hooks and MCP servers are Claude Code features.** The Chat and Cowork tabs in the Claude app don't use them.
-- **Chrome has to be running** for `--autoConnect`, and it asks **Allow?** once per new session.
+- **Chrome has to be running** for `--autoConnect`, and it asks **Allow?** once per new session (once per Chrome start with the broker).
+- **The broker only lets in Claude desktop sessions.** A `claude` session started from a terminal is refused; run `broker-setup.ps1 -Undo` if you work that way.
+- **The automation bar can't be hidden.** Chrome shows it whenever something is connected; with the broker that's all the time. Close it with ✕.
 - **A VPN or proxy that resolves DNS itself** can bypass the hosts file.
 - **Anthropic can change how the extension connects.** `check.ps1` flags new remote hosts after an update. If they add per-device approval, you may not need the block at all.
 
@@ -232,9 +256,12 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-61 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch and the extension's safety rules (no network, no extra permissions), always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+69 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
 
-The extension also has an end-to-end test that loads it in a throwaway Chrome: `npm install --no-save puppeteer-core@24`, then `node tests/extension-e2e.mjs`.
+Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
+
+- `node tests/extension-e2e.mjs` loads the extension and acts like Claude Code;
+- `node tests/broker-e2e.mjs` puts two clients and chrome-devtools-mcp through the broker and checks that sessions stay apart and that pages, wrong hosts and other programs are refused.
 
 ## License
 

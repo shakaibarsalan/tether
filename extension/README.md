@@ -7,8 +7,8 @@ See at a glance which tabs Claude Code is using in your real Chrome.
 | The tab joins an orange **Claude** tab group | The tab icon turns into a green ✓ until you've looked at the tab |
 | The tab icon is an hourglass with running sand | A **Claude is done** pill, also until you're back on the tab; then it all fades out |
 | A soft orange glow breathes around the page | |
-| An orange cursor glides to where Claude clicks or types | |
-| A **Claude is working** pill at the bottom | |
+| An orange cursor with a **Claude** tag glides to where Claude clicks or types, and rings on a click | |
+| A **Claude is working in this tab** pill at the bottom | |
 
 It's the look Claude in Chrome had, for the local DevTools connection Tether uses instead.
 

@@ -1,0 +1,11 @@
+{
+  "name": "tether-broker",
+  "private": true,
+  "description": "One DevTools connection to your Chrome, shared by your signed Claude Code sessions.",
+  "type": "module",
+  "main": "tether-broker.mjs",
+  "engines": { "node": ">=20.19" },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}

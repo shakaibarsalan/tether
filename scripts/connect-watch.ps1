@@ -16,6 +16,16 @@
                                   normal tool. Allow only if you asked for it.
     Unknown program ...           anything else. Stays on screen. Click Block.
 
+  With the Tether broker (broker/tether-broker.mjs), Chrome asks only once, for
+  the broker ("Tether wants Chrome"). Claude Code sessions then connect to the
+  broker instead. The broker asks this script who each one is
+  (-VerifyClientPort) and shows its decision with -ShowToast:
+
+    Claude is using Chrome        a signed Claude desktop session the broker let
+                                  in without asking. Nothing to do.
+    Tether blocked ...            anything else that tried the broker. It was
+                                  refused; stays on screen so you see it.
+
   Every connection also goes to the log file. connect-watch-setup.ps1 starts
   this at every login with no window.
 
@@ -35,6 +45,28 @@
 .PARAMETER SessionRoots
   Extra claude-code-sessions folders to search, besides the one next to each
   Claude Code executable.
+
+.PARAMETER VerifyClientPort
+  For the broker: find the program on the other end of the local TCP connection
+  from this port to -ServerPort, and print as JSON whether to let it in. Yes only
+  for chrome-devtools-mcp started by Claude Code (claude.exe signed by Anthropic,
+  PBC) that the Claude desktop app (also signed by Anthropic) started.
+
+.PARAMETER SkipSignatures
+  With -VerifyClientPort: check everything but the Authenticode signatures and
+  return the two paths. The broker checks signatures itself and remembers them,
+  because claude.exe is a few hundred MB and each check takes seconds.
+
+.PARAMETER CheckSignature
+  Print as JSON whether this file is validly signed by Anthropic, PBC.
+
+.PARAMETER ClaudeExePaths
+  Print the paths of the claude.exe programs running now, as JSON (the broker
+  checks their signatures ahead of time).
+
+.PARAMETER ShowToast
+  Show one notification described by this JSON (Kind, Title, Lines, Hint,
+  ProcessId) and log it. The broker uses it to say what it let in or refused.
 #>
 [CmdletBinding()]
 param(
@@ -43,6 +75,12 @@ param(
     [int]$ExplainPid = 0,
     [string]$LookupSession = '',
     [string[]]$SessionRoots = @(),
+    [int]$VerifyClientPort = 0,
+    [int]$ServerPort = 9333,
+    [switch]$SkipSignatures,
+    [string]$CheckSignature = '',
+    [switch]$ClaudeExePaths,
+    [string]$ShowToast = '',
     [int]$IntervalMs = 500,
     [string]$ChromeUserData = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),
     [string]$LogFile = (Join-Path $env:USERPROFILE '.tether\connect-watch.log')
@@ -169,9 +207,31 @@ function Get-ClaudeSessionUncached($P) {
         if ($leaf -notmatch '^claude_[a-z0-9]+$') { $account = $leaf }
     }
     $s = Find-Session $id $fork $roots
+    # A brand-new session has no id on its command line: match the session the
+    # app created just after this claude.exe started.
+    if ((-not $s -or -not $s.Title) -and -not $id -and $P.CreationDate) { $s = Find-SessionByStart $P.CreationDate $roots }
     if (-not $s) { $s = [pscustomobject]@{ Id = ''; Title = ''; Folder = ''; Account = '' } }
     $s.Account = $account
     return $s
+}
+
+function Find-SessionByStart([datetime]$Start, [string[]]$Roots) {
+    $best = $null
+    $bestGap = 61
+    foreach ($root in $Roots) {
+        if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
+        $files = Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'local_*.json' -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -ge $Start.AddMinutes(-1) }
+        foreach ($f in $files) {
+            $j = Read-SessionFile $f.FullName
+            if (-not $j -or -not $j.createdAt) { continue }
+            $created = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$j.createdAt).LocalDateTime
+            $gap = ($created - $Start).TotalSeconds
+            if ($gap -ge -5 -and $gap -lt $bestGap) { $best = $j; $bestGap = $gap }
+        }
+    }
+    if (-not $best) { return $null }
+    return [pscustomobject]@{ Id = [string]$best.cliSessionId; Title = [string]$best.title; Folder = [string]$best.cwd; Account = '' }
 }
 
 function Get-ShortCommand($P) {
@@ -201,8 +261,18 @@ function Get-ConnectionInfo([int]$ProcId, $Table) {
         for ($i = 0; $i -lt $claudeAt; $i++) { if ([string]$chain[$i].CommandLine -notmatch 'chrome-devtools-mcp') { $isTool = $false } }
     }
 
-    $info = [ordered]@{ Kind = ''; ProcessId = $ProcId; Program = $name; Chain = $chainText; Session = $null; Title = ''; Lines = @(); Hint = '' }
+    $info = [ordered]@{ Kind = ''; ProcessId = $ProcId; Program = $name; Chain = $chainText; Session = $null; Title = ''; Lines = @(); Hint = '';
+                        ClaudePath = ''; AppPath = '' }
     if ($claudeAt -ge 0) {
+        $info.ClaudePath = [string]$chain[$claudeAt].ExecutablePath
+        if ($claudeAt + 1 -lt $chain.Count) { $info.AppPath = [string]$chain[$claudeAt + 1].ExecutablePath }
+    }
+    if ($self -and [string]$self.CommandLine -match 'tether-broker\.mjs') {
+        $info.Kind = 'tether-broker'
+        $info.Title = 'Tether wants Chrome'
+        $info.Lines = @('Allow once: your Claude sessions then get in without asking', "Until Chrome closes. node.exe, pid $ProcId")
+        $info.Hint = 'Allow. This is the Tether broker.'
+    } elseif ($claudeAt -ge 0) {
         $s = Get-ClaudeSession $chain[$claudeAt]
         $info.Session = $s
         $label = if ($s.Title) { $s.Title } elseif ($s.Id) { 'session ' + $s.Id.Substring(0, 8) } else { 'a Claude Code session' }
@@ -237,7 +307,7 @@ function Show-Toast($Info) {
         $texts = "<text>$(& $esc $Info.Title)</text>"
         foreach ($l in @($Info.Lines)) { $texts += "<text>$(& $esc $l)</text>" }
         $texts += "<text placement=`"attribution`">$(& $esc ('Tether: ' + $Info.Hint))</text>"
-        $urgent = $Info.Kind -ne 'claude-tool'
+        $urgent = @('claude-tool', 'tether-broker', 'broker-allowed') -notcontains $Info.Kind
         $scenario = if ($urgent) { ' scenario="reminder"' } else { '' }
         $actions = if ($urgent) { '<actions><action activationType="system" arguments="dismiss" content=""/></actions>' } else { '' }
         $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
@@ -255,8 +325,47 @@ function Show-Toast($Info) {
 
 function Format-Info($Info) {
     $text = '{0,-13} {1} | {2}' -f $Info.Kind, $Info.Title, (@($Info.Lines) -join ' | ')
-    if ($Info.Kind -ne 'unknown') { $text += " | started by $($Info.Chain)" }  # unknown already says it
+    if (@('unknown', 'broker-blocked') -notcontains $Info.Kind) { $text += " | started by $($Info.Chain)" }  # those already say it
     return $text
+}
+
+# ---- who may use the broker -------------------------------------------------
+
+$SigCache = @{}
+function Test-AnthropicSigned([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    $item = Get-Item -LiteralPath $Path
+    $key = '{0}|{1}|{2}' -f $Path.ToLowerInvariant(), $item.Length, $item.LastWriteTimeUtc.Ticks
+    if ($SigCache.ContainsKey($key)) { return $SigCache[$key] }
+    $ok = $false
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path
+        $ok = ($sig.Status -eq 'Valid' -and [string]$sig.SignerCertificate.Subject -match '(^|, )O="?Anthropic, PBC"?(,|$)')
+    } catch {}
+    $SigCache[$key] = $ok
+    return $ok
+}
+
+$DesktopApp = '\\WindowsApps\\Claude_[^\\]+\\app\\claude\.exe$'
+
+# Yes only for chrome-devtools-mcp started by Claude Code, where Claude Code
+# (claude.exe) and the Claude desktop app that started it are both signed by
+# Anthropic. A script Claude ran, a terminal session or anything else: no.
+function Test-ClientAllowed($Info, [bool]$Signatures = $true) {
+    $no = { param($why) [pscustomobject]@{ Allowed = $false; Reason = $why } }
+    if ($Info.Kind -ne 'claude-tool') { return & $no "not Claude's chrome-devtools-mcp ($($Info.Kind))" }
+    if ($Info.AppPath -notmatch $DesktopApp) { return & $no "not started by the Claude desktop app ($($Info.AppPath))" }
+    if ($Signatures) {
+        if (-not (Test-AnthropicSigned $Info.ClaudePath)) { return & $no "Claude Code isn't signed by Anthropic ($($Info.ClaudePath))" }
+        if (-not (Test-AnthropicSigned $Info.AppPath)) { return & $no "the Claude app isn't signed by Anthropic ($($Info.AppPath))" }
+    }
+    return [pscustomobject]@{ Allowed = $true; Reason = 'chrome-devtools-mcp from a signed Claude desktop session' }
+}
+
+function Get-SessionLabel($Info) {
+    if ($Info.Session -and $Info.Session.Title) { return $Info.Session.Title }
+    if ($Info.Session -and $Info.Session.Id) { return 'session ' + $Info.Session.Id.Substring(0, 8) }
+    return 'a Claude Code session'
 }
 
 # ---- one-shot modes ---------------------------------------------------------
@@ -277,7 +386,56 @@ if ($LookupSession) {
 }
 
 if ($ExplainPid) {
-    Write-Utf8Out (ConvertTo-Json -InputObject (Get-ConnectionInfo $ExplainPid $null) -Depth 4 -Compress)
+    $info = Get-ConnectionInfo $ExplainPid $null
+    $info | Add-Member -NotePropertyName BrokerVerdict -NotePropertyValue (Test-ClientAllowed $info)
+    Write-Utf8Out (ConvertTo-Json -InputObject $info -Depth 4 -Compress)
+    exit 0
+}
+
+if ($VerifyClientPort) {
+    $conn = Get-NetTCPConnection -LocalPort $VerifyClientPort -RemotePort $ServerPort -State Established -ErrorAction SilentlyContinue | Select-Object -First 1
+    $answer = [ordered]@{ Allowed = $false; Reason = 'connection not found'; Label = "client :$VerifyClientPort"; Kind = '';
+                          Program = ''; ProcessId = 0; Chain = ''; Session = ''; Folder = ''; ClaudePath = ''; AppPath = '' }
+    if ($conn) {
+        $info = Get-ConnectionInfo ([int]$conn.OwningProcess) $null
+        $v = Test-ClientAllowed $info (-not $SkipSignatures)
+        $answer.Allowed = [bool]$v.Allowed
+        $answer.Reason = $v.Reason
+        $answer.Kind = $info.Kind
+        $answer.Program = $info.Program
+        $answer.ProcessId = $info.ProcessId
+        $answer.Chain = $info.Chain
+        $answer.ClaudePath = $info.ClaudePath
+        $answer.AppPath = $info.AppPath
+        if ($info.Kind -like 'claude-*') {
+            $answer.Session = Get-SessionLabel $info
+            $answer.Folder = if ($info.Session -and $info.Session.Folder) { $info.Session.Folder } else { '' }
+            $answer.Label = "Claude session '$($answer.Session)' ($($info.Program), pid $($info.ProcessId))"
+        } else {
+            $answer.Label = "$($info.Program) (pid $($info.ProcessId))"
+        }
+    }
+    Write-Utf8Out (ConvertTo-Json -InputObject $answer -Compress)
+    exit 0
+}
+
+if ($CheckSignature) {
+    Write-Utf8Out (ConvertTo-Json -InputObject ([ordered]@{ Path = $CheckSignature; Signed = (Test-AnthropicSigned $CheckSignature) }) -Compress)
+    exit 0
+}
+
+if ($ClaudeExePaths) {
+    $paths = @(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ForEach-Object { [string]$_.ExecutablePath } |
+        Where-Object { $_ } | Sort-Object -Unique)
+    Write-Utf8Out (ConvertTo-Json -InputObject $paths -Compress)
+    exit 0
+}
+
+if ($ShowToast) {
+    $t = $ShowToast | ConvertFrom-Json
+    $info = [pscustomobject]@{ Kind = [string]$t.Kind; Title = [string]$t.Title; Lines = @($t.Lines); Hint = [string]$t.Hint; ProcessId = [int]$t.ProcessId; Chain = '' }
+    Write-Log ("broker: " + (Format-Info $info))
+    $null = Show-Toast $info
     exit 0
 }
 
@@ -307,41 +465,48 @@ catch [System.Threading.AbandonedMutexException] { $owned = $true }  # the last 
 if (-not $owned) { exit 0 }  # already running
 
 Write-Log "watching (pid $PID)"
-$seen = @{}
+# Chrome's debugging port. (Connections to the Tether broker are reported by the
+# broker itself, through -ShowToast, so the notification says what it decided.)
+$doors = @(
+    @{ Name = 'chrome'; Port = $null; Seen = @{}; Baseline = $true }
+)
 $lastToast = @{}
-$port = $null
 $portReadAt = [datetime]::MinValue
-$baseline = $true
 
 while ($true) {
     try {
-        if (-not $port -or ((Get-Date) - $portReadAt).TotalSeconds -ge 5) {
+        if (((Get-Date) - $portReadAt).TotalSeconds -ge 5) {
             $newPort = Get-DebugPort
-            if ($newPort -ne $port) { $seen = @{}; $baseline = $true; if ($newPort) { Write-Log "Chrome debugging port $newPort" } }
-            $port = $newPort
+            if ($newPort -ne $doors[0].Port) {
+                $doors[0].Seen = @{}; $doors[0].Baseline = $true
+                if ($newPort) { Write-Log "Chrome debugging port $newPort" }
+            }
+            $doors[0].Port = $newPort
             $portReadAt = Get-Date
         }
-        if ($port) {
-            $ports = Get-ClientPorts $port
-            $fresh = @($ports.Keys | Where-Object { -not $seen.ContainsKey($_) })
+        foreach ($door in $doors) {
+            if (-not $door.Port) { continue }
+            $ports = Get-ClientPorts $door.Port
+            $fresh = @($ports.Keys | Where-Object { -not $door.Seen.ContainsKey($_) })
             if ($fresh.Count) {
                 $table = Get-ProcessTable
                 foreach ($lp in $fresh) {
-                    $seen[$lp] = $true
-                    $owner = (Get-NetTCPConnection -LocalPort $lp -RemotePort $port -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess
+                    $door.Seen[$lp] = $true
+                    $owner = (Get-NetTCPConnection -LocalPort $lp -RemotePort $door.Port -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess
                     if (-not $owner) { continue }
                     $owner = [int]$owner
                     $info = Get-ConnectionInfo $owner $table
-                    if ($baseline) { Write-Log ('already connected: ' + (Format-Info $info)); continue }
-                    Write-Log ('new connection: ' + (Format-Info $info))
+                    if ($door.Baseline) { Write-Log ("already connected ($($door.Name)): " + (Format-Info $info)); continue }
+                    Write-Log ("new connection ($($door.Name)): " + (Format-Info $info))
                     # one program often opens more than one connection: one notification is enough
-                    if ($lastToast.ContainsKey($owner) -and ((Get-Date) - $lastToast[$owner]).TotalSeconds -lt 60) { continue }
-                    $lastToast[$owner] = Get-Date
+                    $key = "$($door.Name)/$owner"
+                    if ($lastToast.ContainsKey($key) -and ((Get-Date) - $lastToast[$key]).TotalSeconds -lt 60) { continue }
+                    $lastToast[$key] = Get-Date
                     $null = Show-Toast $info
                 }
             }
-            foreach ($k in @($seen.Keys)) { if (-not $ports.ContainsKey($k)) { $seen.Remove($k) } }
-            $baseline = $false
+            foreach ($k in @($door.Seen.Keys)) { if (-not $ports.ContainsKey($k)) { $door.Seen.Remove($k) } }
+            $door.Baseline = $false
         }
     } catch {
         Write-Log "error: $($_.Exception.Message)"

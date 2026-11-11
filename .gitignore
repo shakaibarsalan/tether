@@ -21,5 +21,5 @@ video/any-account/build/
 
 # Node (tests/extension-e2e.mjs)
 node_modules/
-package.json
-package-lock.json
+/package.json
+/package-lock.json

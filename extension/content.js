@@ -141,8 +141,15 @@
     }
   }
 
+  let restTimer = 0;
+
+  // The cursor is a small arrow with a "Claude" tag, like a collaborator's
+  // cursor. It glides to the spot, rings on a click, and after a moment at rest
+  // the tag fades and the arrow shrinks back.
   function moveCursor(x, y, click) {
     const u = ensureUI();
+    clearTimeout(restTimer);
+    u.cursor.classList.remove('rest');
     const place = () => { u.cursor.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`; };
     if (!cursorShown) {
       // first appearance: fade in a little up and left of the target, then glide
@@ -156,11 +163,12 @@
     requestAnimationFrame(place);
     if (click) {
       setTimeout(() => {
-        u.ripple.classList.remove('go');
-        void u.ripple.offsetWidth;
-        u.ripple.classList.add('go');
-      }, 380);
+        u.ring.classList.remove('go');
+        void u.ring.offsetWidth;
+        u.ring.classList.add('go');
+      }, 420);
     }
+    restTimer = setTimeout(() => u.cursor.classList.add('rest'), 1600);
   }
 
   function hideCursor() {
@@ -174,7 +182,7 @@
   function setPill(kind) {
     const u = ensureUI();
     u.pillIcon.className = kind === 'working' ? 'icon spin' : 'icon check';
-    u.pillText.textContent = kind === 'working' ? 'Claude is working' : 'Claude is done';
+    u.pillText.textContent = kind === 'working' ? 'Claude is working in this tab' : 'Claude is done';
     u.pill.classList.toggle('done', kind === 'done');
     u.pill.classList.add('on');
   }
@@ -288,10 +296,10 @@
     .halo {
       position: absolute; inset: 0;
       box-shadow:
-        inset 0 0 0 1px rgba(217, 119, 87, .38),
-        inset 0 0 12px 1px rgba(217, 119, 87, .42),
-        inset 0 0 46px 6px rgba(217, 119, 87, .20),
-        inset 0 0 110px 14px rgba(232, 144, 111, .08);
+        inset 0 0 14px rgba(217, 119, 87, .66),
+        inset 0 0 26px rgba(217, 119, 87, .44),
+        inset 0 0 40px rgba(217, 119, 87, .20),
+        inset 0 0 110px 10px rgba(232, 144, 111, .07);
       animation: breathe 3.2s ease-in-out infinite;
     }
     .sheen {
@@ -301,42 +309,48 @@
       animation: sheen 3.6s cubic-bezier(.45, 0, .2, 1) infinite;
     }
     .sheen.low { top: auto; bottom: 0; animation-direction: reverse; animation-delay: -1.8s; opacity: .7; }
-    @keyframes breathe { 0%, 100% { opacity: .68; } 50% { opacity: 1; } }
+    @keyframes breathe { 0%, 100% { opacity: .78; } 50% { opacity: 1; } }
     @keyframes sheen { 0% { transform: translateX(-110%); } 100% { transform: translateX(310%); } }
 
     .cursor {
       position: fixed; left: 0; top: 0; width: 0; height: 0; opacity: 0;
-      transition: transform .55s cubic-bezier(.22, 1, .36, 1), opacity .3s ease;
+      transition: transform .55s cubic-bezier(.22, 1, .36, 1), opacity .2s ease-out;
       will-change: transform;
     }
     .cursor.on { opacity: 1; }
-    .cursor svg {
-      position: absolute; left: -2.6px; top: -2.6px; width: 28px; height: 28px; overflow: visible;
-      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .32)) drop-shadow(0 0 10px rgba(217, 119, 87, .35));
+    .arrow {
+      position: absolute; left: -3px; top: -2px; width: 22px; height: 22px; overflow: visible;
+      transform-origin: 3px 2px; transition: transform .2s ease-out, opacity .2s ease-out;
+      filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .3));
     }
-    .ripple {
-      position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%;
-      border: 2px solid ${ORANGE}; background: rgba(217, 119, 87, .14); opacity: 0;
+    .tag {
+      position: absolute; left: 14px; top: 16px; height: 22px; box-sizing: border-box; padding: 3px 8px;
+      border-radius: 6px; background: ${ORANGE}; color: #fff; white-space: nowrap;
+      font: 600 12px/16px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      box-shadow: 0 4px 14px rgba(217, 119, 87, .3), 0 1px 2px rgba(0, 0, 0, .2);
+      transition: opacity .3s ease;
     }
-    .ripple.go { animation: ripple .7s cubic-bezier(.22, 1, .36, 1); }
-    @keyframes ripple { 0% { opacity: .95; transform: scale(.25); } 100% { opacity: 0; transform: scale(1.6); } }
+    .cursor.rest .arrow { transform: scale(.8); opacity: .6; }
+    .cursor.rest .tag { opacity: 0; }
+    .ring {
+      position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; box-sizing: border-box;
+      border-radius: 50%; border: 2px solid ${ORANGE}; opacity: 0;
+    }
+    .ring.go { animation: ring .65s ease-out forwards; }
+    @keyframes ring { 0% { opacity: .9; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.5); } }
 
     .pill {
-      position: fixed; left: 50%; bottom: 20px; display: flex; align-items: center; gap: 9px;
-      padding: 9px 15px 9px 11px; border-radius: 999px;
-      background: rgba(28, 27, 26, .84);
-      -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4);
-      color: #F5F0E8;
-      font: 500 13px/1.15 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      letter-spacing: .01em; white-space: nowrap;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .18),
-                  inset 0 0 0 1px rgba(255, 255, 255, .07), 0 0 0 1px rgba(217, 119, 87, .28);
-      opacity: 0; transform: translate(-50%, 14px) scale(.98);
+      position: fixed; left: 50%; bottom: 22px; display: flex; align-items: center; gap: 10px;
+      padding: 11px 16px 11px 13px; border-radius: 12px;
+      background: #FAF9F5; color: #141413; border: .5px solid rgba(31, 30, 29, .3);
+      font: 500 14px/1.2 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      white-space: nowrap;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, .14), 0 4px 14px rgba(217, 119, 87, .24);
+      opacity: 0; transform: translate(-50%, 16px) scale(.98);
       transition: opacity .35s ease, transform .5s cubic-bezier(.22, 1, .36, 1), box-shadow .4s ease;
     }
     .pill.on { opacity: 1; transform: translate(-50%, 0) scale(1); }
-    .pill.done { box-shadow: 0 12px 32px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .18),
-                 inset 0 0 0 1px rgba(255, 255, 255, .07), 0 0 0 1px rgba(46, 163, 106, .35); }
+    .pill.done { box-shadow: 0 18px 40px rgba(0, 0, 0, .14), 0 4px 14px rgba(46, 163, 106, .22); }
     .icon { width: 15px; height: 15px; flex: none; border-radius: 50%; position: relative; }
     .icon.spin { border: 2px solid rgba(217, 119, 87, .22); border-top-color: ${ORANGE}; border-right-color: ${ORANGE}; box-sizing: border-box; animation: spin .85s linear infinite; }
     .icon.check { background: ${GREEN}; animation: pop .45s cubic-bezier(.34, 1.56, .64, 1); }
@@ -348,7 +362,7 @@
     @keyframes pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
 
     @media (prefers-reduced-motion: reduce) {
-      .halo, .sheen, .icon.spin, .icon.check, .ripple.go { animation: none; }
+      .halo, .sheen, .icon.spin, .icon.check, .ring.go { animation: none; }
       .sheen { display: none; }
       .cursor { transition: opacity .2s ease; }
     }
@@ -382,25 +396,29 @@
     el('div', 'sheen low', glow);
 
     const cursor = el('div', 'cursor', root);
-    const ripple = el('div', 'ripple', cursor);
+    const ring = el('div', 'ring', cursor);
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'arrow');
+    svg.setAttribute('viewBox', '0 0 18 18');
     const arrow = document.createElementNS(NS, 'path');
-    arrow.setAttribute('d', 'M2.5 2.2 L2.9 20.1 L7.6 15.6 L11 22.6 L14.4 21.1 L11.1 14.2 L17.6 13.9 Z');
+    // a slim, tilted pointer whose tip sits at (3, 2)
+    arrow.setAttribute('d', 'M3 2 L15.9 8.2 L9.9 10.1 L7.6 16.2 Z');
     arrow.setAttribute('fill', ORANGE);
-    arrow.setAttribute('stroke', '#FFF8F2');
-    arrow.setAttribute('stroke-width', '1.6');
+    arrow.setAttribute('stroke', '#fff');
+    arrow.setAttribute('stroke-width', '1.2');
     arrow.setAttribute('stroke-linejoin', 'round');
     svg.appendChild(arrow);
     cursor.appendChild(svg);
+    const tag = el('div', 'tag', cursor);
+    tag.textContent = 'Claude';
 
     const pill = el('div', 'pill', root);
     const pillIcon = el('span', 'icon', pill);
     const pillText = el('span', 'text', pill);
 
     document.documentElement.appendChild(host);
-    ui = { host, glow, cursor, ripple, pill, pillIcon, pillText };
+    ui = { host, glow, cursor, ring, pill, pillIcon, pillText };
     return ui;
   }
 })();

@@ -19,6 +19,10 @@
 .PARAMETER SkipWatch
   Don't install the connect watch.
 
+.PARAMETER Broker
+  Also set up the Tether broker (scripts\broker-setup.ps1): Chrome asks "Allow?"
+  once per Chrome start, and signed Claude desktop sessions get in without asking.
+
 .PARAMETER SkipBlock
   Only set up the local DevTools connection.
 #>
@@ -26,6 +30,7 @@
 param(
     [switch]$SkipDevTools,
     [switch]$SkipWatch,
+    [switch]$Broker,
     [switch]$SkipBlock
 )
 
@@ -40,6 +45,12 @@ if (-not $SkipDevTools) {
         Write-Host ''
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'connect-watch-setup.ps1')
         if ($LASTEXITCODE -ne 0) { Write-Host 'The connect watch did not start (the rest of the setup is fine).' -ForegroundColor Yellow }
+    }
+
+    if ($Broker) {
+        Write-Host ''
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'broker-setup.ps1')
+        if ($LASTEXITCODE -ne 0) { Write-Host 'The broker did not start; Claude Code still connects straight to Chrome.' -ForegroundColor Yellow }
     }
 }
 

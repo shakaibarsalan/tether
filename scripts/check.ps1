@@ -132,9 +132,13 @@ if (-not $SkipLive) {
                 $cursor = Get-CimInstance Win32_Process -Filter "ProcessId=$($cursor.ParentProcessId)" -ErrorAction SilentlyContinue
                 if ($cursor) { $chain += $cursor.Name }
             }
-            $what = if ($proc -and $proc.CommandLine -match 'chrome-devtools-mcp') { 'chrome-devtools-mcp' } elseif ($proc) { $proc.Name } else { "pid $($c.OwningProcess)" }
+            $brokerScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'broker\tether-broker.mjs'
+            $isBroker = $proc -and $proc.Name -eq 'node.exe' -and ([string]$proc.CommandLine).ToLowerInvariant().Contains($brokerScript.ToLowerInvariant())
+            $what = if ($isBroker) { 'the Tether broker' } elseif ($proc -and $proc.CommandLine -match 'chrome-devtools-mcp') { 'chrome-devtools-mcp' } elseif ($proc) { $proc.Name } else { "pid $($c.OwningProcess)" }
             $by = if ($chain) { $chain -join ' <- ' } else { 'unknown' }
-            if ($what -eq 'chrome-devtools-mcp' -and ($chain | Where-Object { $_ -match '^claude(\.exe)?$' })) {
+            if ($isBroker) {
+                Add-Ok "connected to Chrome: $what (pid $($c.OwningProcess)); it lets in only signed Claude desktop sessions"
+            } elseif ($what -eq 'chrome-devtools-mcp' -and ($chain | Where-Object { $_ -match '^claude(\.exe)?$' })) {
                 Add-Ok "connected to Chrome: $what (pid $($c.OwningProcess)), started by $by"
             } else {
                 Add-Problem "an unknown program is connected to Chrome remote debugging: $what (pid $($c.OwningProcess)), started by $by. If you didn't start it, close Chrome or turn off chrome://inspect/#remote-debugging."
