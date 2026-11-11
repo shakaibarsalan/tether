@@ -2,3 +2,4 @@
 # cmd.exe misreads .bat files with LF line endings
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+*.vbs text eol=crlf

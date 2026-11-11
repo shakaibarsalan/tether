@@ -274,5 +274,55 @@ class TabMarkerInstallTest(unittest.TestCase):
         self.assertEqual(load(self.settings), self.original)
 
 
+@unittest.skipUnless(os.name == "nt" and os.path.exists(POWERSHELL), "Windows PowerShell only")
+class ConnectWatchTest(unittest.TestCase):
+    """connect-watch.ps1: finding a Claude Code session's title, and naming a process.
+    Uses a fake claude-code-sessions folder; never shows a notification."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix=".tmp-sessions-", dir=os.path.dirname(os.path.abspath(__file__)))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def write_session(self, local_id, cli_id, title, cwd):
+        folder = os.path.join(self.root, "account", "org")
+        os.makedirs(folder, exist_ok=True)
+        record = {"sessionId": "local_" + local_id, "cliSessionId": cli_id, "title": title, "cwd": cwd,
+                  "createdAt": 1794387025614, "padding": "x" * 5000}
+        with open(os.path.join(folder, "local_%s.json" % local_id), "w", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=False)
+
+    def lookup(self, cli_id):
+        r = run_script("connect-watch.ps1", "-LookupSession", cli_id, "-SessionRoots", self.root)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return json.loads(r.stdout)
+
+    def test_finds_title_and_folder_by_file_name(self):
+        sid = "288765c3-01f4-4f1d-90d5-d8c41eb94599"
+        self.write_session(sid, sid, "resolving issues", r"C:\Users\me\Agent")
+        found = self.lookup(sid)
+        self.assertEqual((found["Title"], found["Folder"]), ("resolving issues", r"C:\Users\me\Agent"))
+
+    def test_finds_session_whose_cli_id_differs_from_file_name(self):
+        self.write_session("aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002",
+                           "Chrome ka kaam \u2705", r"C:\Drive\Research")
+        found = self.lookup("bbbbbbbb-0000-0000-0000-000000000002")
+        self.assertEqual(found["Title"], "Chrome ka kaam \u2705")
+
+    def test_unknown_session_has_empty_title(self):
+        self.write_session("aaaaaaaa-0000-0000-0000-000000000001", "aaaaaaaa-0000-0000-0000-000000000001", "x", "y")
+        self.assertEqual(self.lookup("cccccccc-0000-0000-0000-000000000003")["Title"], "")
+
+    def test_a_process_that_is_not_chrome_devtools_mcp_is_never_the_trusted_tool(self):
+        r = run_script("connect-watch.ps1", "-ExplainPid", str(os.getpid()))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        info = json.loads(r.stdout)
+        self.assertEqual(info["ProcessId"], os.getpid())
+        # "claude-script" when the tests themselves run inside a Claude Code session
+        self.assertIn(info["Kind"], ("unknown", "claude-script"))
+        self.assertTrue(info["Title"] and info["Hint"])
+
+
 if __name__ == "__main__":
     unittest.main()

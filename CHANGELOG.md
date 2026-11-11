@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Connect watch:** `scripts/connect-watch.ps1` pops up a Windows notification the moment a program connects to Chrome's debugging port, which is when Chrome shows **Allow?**. It names the Claude Code session behind chrome-devtools-mcp (its title, folder and account folder), flags scripts a session ran itself, and keeps a notification on screen for anything else. Every connection is logged to `%USERPROFILE%\.tether\connect-watch.log`. `scripts/connect-watch-setup.ps1` runs it at every login with no window (Task Scheduler, no admin), with `-Status` and `-Undo`. `install.ps1` and `uninstall.ps1` include it.
+- **Tests:** 51.
+
 ## 0.2.0 (2026-11-09)
 
 - **Check script:** `scripts/check.ps1` verifies the hosts block, that Chrome was restarted after it, that remote debugging is loopback-only, and whether Remote Control is off. It also scans every installed Claude in Chrome version for remote hosts it hasn't seen, and caches what it scanned. `-Hook` makes it a quiet `SessionStart` hook that only speaks up when something changes.

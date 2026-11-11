@@ -91,10 +91,11 @@ cd tether
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.ps1` does two things:
+`install.ps1` does three things:
 
 1. **DevTools setup.** It installs `chrome-devtools-mcp` (pinned to a version) and registers it in Claude Code as `chrome-devtools`.
-2. **Bridge block.** It adds two lines to the hosts file. Windows asks for admin.
+2. **Connect watch.** A small background watcher that tells you who is behind each **Allow?** prompt (see [below](#see-whos-asking-for-allow)). Starts at every login, no admin.
+3. **Bridge block.** It adds two lines to the hosts file. Windows asks for admin.
 
 Then, once:
 
@@ -112,7 +113,7 @@ Prefer clicking? `Block-Remote.bat` and `Unblock-Remote.bat` do the bridge part 
   ```powershell
   powershell -File .\scripts\bridge-block.ps1 -Status
   ```
-- **Clicking "Allow?"** Only programs on this computer can bring up that prompt, because the port isn't reachable from the network. Allow it when you've just given Claude a browser task. If it pops up out of nowhere, click Deny. `check.ps1` shows exactly which program is connected.
+- **Clicking "Allow?"** Only programs on this computer can bring up that prompt, because the port isn't reachable from the network. The connect watch pops up a notification next to it that names the program, and the Claude Code session if it's one. Allow it when that's a session you just gave a browser task. If it's anything else, click Block.
 
 ## See which tab Claude is using
 
@@ -125,6 +126,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tab-marker.ps1
 This adds a hook that, after each browser action Claude takes, marks the tab it just used. `-Undo` removes it.
 
 All your Chrome profiles run in one Chrome, so the DevTools connection can reach the open windows of **every** profile, whatever Claude account you use. The marker shows you where Claude is working.
+
+## See who's asking for "Allow?"
+
+Chrome asks **Allow?** every time a program connects to it, and there's no "always allow". That prompt is what stops any other program on your computer from quietly taking over your logged-in Chrome. But it doesn't say *who* is asking, and with several Claude Code sessions open you can't tell.
+
+The connect watch fixes that. When a program connects, you get a Windows notification within about a second:
+
+| Notification | What it is | What to do |
+|---|---|---|
+| **Claude wants Chrome: *session title*** | chrome-devtools-mcp started by that Claude Code session. Shows its folder, and the account folder if it isn't the default. | Allow, if you just gave that session a browser task. |
+| **A script run by Claude wants Chrome** | Something a session ran from a shell, not the normal tool. Shows the session and the command. | Allow only if you asked for it. |
+| **Unknown program wants Chrome: *name*** | Anything else. Shows its path and what started it. Stays on screen. | Block. |
+
+`install.ps1` sets it up. On its own:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\connect-watch-setup.ps1          # install and start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\connect-watch-setup.ps1 -Status  # is it running? last log lines
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\connect-watch-setup.ps1 -Undo    # remove
+```
+
+It's a Task Scheduler task for your user, started at login with no window. It only reads: open connections, process names and the session titles the Claude app keeps. Every connection is logged to `%USERPROFILE%\.tether\connect-watch.log`. `scripts\connect-watch.ps1 -Once` lists what's connected right now.
 
 ## Check it's still holding
 
@@ -163,7 +186,7 @@ The important line is the third one. When the extension updates, `check.ps1` sca
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-This removes the DevTools server and the bridge block. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
+This removes the DevTools server, the connect watch and the bridge block. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
 
 ## Optional: the guard hook
 
@@ -198,7 +221,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-47 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script and the tab-marker installer, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+51 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer and the connect watch, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
 
 ## License
 
