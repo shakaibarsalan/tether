@@ -49,6 +49,10 @@ Tying the browser to an account causes a second problem. If you use more than on
 
 The connection is local, so it follows the computer, not the account. Sign in to the sites you use once, and every Claude account you switch to can use them.
 
+<a href="video/any-account/tether-any-account.mp4"><img src="assets/any-account.jpg" width="600" alt="Short video: three Claude account badges go into the same Chrome on one laptop, and the logged-in tabs open above it."></a>
+
+<sub>▶ <a href="video/any-account/tether-any-account.mp4"><b>Watch: one browser, any Claude account</b></a> (22 s, with sound)</sub>
+
 ## What Tether does
 
 | | |
