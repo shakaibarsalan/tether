@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Tether",
+  "short_name": "Tether",
+  "version": "0.1.0",
+  "description": "See which tabs Claude Code is using: an orange tab group, a working and done tab icon, a soft edge glow and a cursor. Display only.",
+  "minimum_chrome_version": "120",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["tabGroups", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -18,3 +18,8 @@ Thumbs.db
 # Video build output (audio, frames)
 video/build/
 video/any-account/build/
+
+# Node (tests/extension-e2e.mjs)
+node_modules/
+package.json
+package-lock.json

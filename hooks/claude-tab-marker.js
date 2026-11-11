@@ -1,8 +1,27 @@
-() => {
-  // Marks a tab Claude Code is driving: "🤖 " in front of the title, a thin
-  // orange frame and a small badge. Safe to run again and again: it only
+async () => {
+  // Runs in the tab Claude Code just used, after each chrome-devtools action.
+  //
+  // With the Tether extension installed: tell it Claude is here. It shows the
+  // orange tab group, the hourglass/check tab icon, the edge glow and the cursor.
+  //
+  // Without it: mark the tab in the page itself, "🤖 " in front of the title, a
+  // thin orange frame and a small badge. Safe to run again and again: it only
   // installs itself once per page, and keeps the title prefix when the site
   // changes its title. Nothing here blocks clicks (pointer-events: none).
+  const id = Math.random().toString(36).slice(2);
+  const extension = await new Promise((resolve) => {
+    const onMessage = (e) => {
+      if (e.data && e.data.tether === 'ack' && e.data.id === id) {
+        removeEventListener('message', onMessage);
+        resolve(true);
+      }
+    };
+    addEventListener('message', onMessage);
+    postMessage({ tether: 'claude-active', id }, '*');
+    setTimeout(() => { removeEventListener('message', onMessage); resolve(false); }, 300);
+  });
+  if (extension) return 'tether extension';
+
   const MARK = '🤖 ';
   const keep = () => {
     if (!document.title.startsWith(MARK)) document.title = MARK + document.title;

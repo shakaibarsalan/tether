@@ -127,6 +127,17 @@ This adds a hook that, after each browser action Claude takes, marks the tab it 
 
 All your Chrome profiles run in one Chrome, so the DevTools connection can reach the open windows of **every** profile, whatever Claude account you use. The marker shows you where Claude is working.
 
+### Better: the Tether extension
+
+The `extension` folder brings back the look Claude in Chrome had, without its remote bridge:
+
+- the tab joins an orange **Claude** tab group;
+- the tab icon is an hourglass while Claude works and a green ✓ when it's done;
+- a soft orange glow breathes around the page, and a **Claude is working** pill sits at the bottom;
+- an orange cursor glides to where Claude clicks or types.
+
+It only shows things. It has no network access and can't drive the browser. With it installed, the tab-marker hook hands over to it; without it, the hook keeps drawing the in-page marker. Load it from `chrome://extensions` (Developer mode → **Load unpacked** → the `extension` folder). [extension/README.md](extension/README.md) explains how it works, file by file.
+
 ## See who's asking for "Allow?"
 
 Chrome asks **Allow?** every time a program connects to it, and there's no "always allow". That prompt is what stops any other program on your computer from quietly taking over your logged-in Chrome. But it doesn't say *who* is asking, and with several Claude Code sessions open you can't tell.
@@ -221,7 +232,9 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-51 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer and the connect watch, always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+61 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch and the extension's safety rules (no network, no extra permissions), always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+
+The extension also has an end-to-end test that loads it in a throwaway Chrome: `npm install --no-save puppeteer-core@24`, then `node tests/extension-e2e.mjs`.
 
 ## License
 
