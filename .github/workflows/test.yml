@@ -2,8 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
+  workflow_call:
 
 jobs:
   windows:
@@ -15,3 +16,91 @@ jobs:
           python-version: "3.12"
       - name: Guards, bridge block and installer
         run: python -m unittest discover -s tests -v
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Shell scripts parse with the bash macOS ships (3.2)
+        run: for f in install.sh uninstall.sh ./*.command scripts/*.sh scripts/lib/common.sh; do /bin/bash -n "$f"; done
+      - name: Broker dependency
+        working-directory: broker
+        run: npm ci --omit=dev --no-audit --no-fund
+      - name: Claude Code, to check Anthropic's signature on a real binary
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash || true
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Unit tests (guards, scripts, connect watch, broker checks)
+        run: python -m unittest discover -s tests -v
+      - name: End to end in a throwaway Chrome (broker, chrome-devtools-mcp, extension)
+        env:
+          CHROME_PATH: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+        run: |
+          npm install --no-save --no-audit --no-fund puppeteer-core@24
+          npm install --prefix "$HOME/.tether/npm" --no-audit --no-fund chrome-devtools-mcp@1.12.0
+          node tests/broker-e2e.mjs
+          node tests/extension-e2e.mjs
+
+  macos-install:
+    # The real thing on a throwaway Mac: install.sh with the broker, check
+    # everything is in place, then uninstall.sh and check it's all gone.
+    runs-on: macos-latest
+    needs: macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash || npm install -g @anthropic-ai/claude-code
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: ./install.sh --broker
+        run: ./install.sh --broker
+      - name: Everything is in place
+        run: |
+          set -x
+          scripts/bridge-block.sh --status | grep '^Blocked'
+          python3 -c "import socket; ip = socket.gethostbyname('bridge.claudeusercontent.com'); print(ip); assert ip == '0.0.0.0'"
+          ls -l /etc/hosts.bak-tether-*
+          curl -fsS http://127.0.0.1:9333/status
+          launchctl print "gui/$(id -u)/io.github.shakaibarsalan.tether.broker" | grep 'state = running'
+          launchctl print "gui/$(id -u)/io.github.shakaibarsalan.tether.connect-watch" | grep 'state = running'
+          test -f "$HOME/.tether/npm/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
+          claude mcp get chrome-devtools | grep 'wsEndpoint=ws://127.0.0.1:9333/devtools/browser/tether'
+          scripts/broker-setup.sh --status
+          scripts/connect-watch-setup.sh --status
+          scripts/check.sh
+          scripts/check.sh --install-hook && grep 'scripts/check.sh' ~/.claude/settings.json
+          scripts/tab-marker.sh && scripts/tab-guard.sh && grep -c 'tab-guard.mjs' ~/.claude/settings.json
+      - name: A program that isn't Claude gets 403 from the installed broker
+        run: |
+          code=$(python3 - <<'PY'
+          import socket
+          c = socket.create_connection(("127.0.0.1", 9333), timeout=60)
+          c.sendall(b"GET /devtools/browser/tether HTTP/1.1\r\nHost: 127.0.0.1:9333\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                    b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+          print(c.recv(100).decode().split()[1])
+          PY
+          )
+          echo "broker answered $code"
+          test "$code" = 403
+          grep refused "$HOME/.tether/broker.log"
+      - name: ./uninstall.sh
+        run: ./uninstall.sh
+      - name: Everything is gone
+        run: |
+          set -x
+          scripts/bridge-block.sh --status | grep '^Open'
+          ! grep 'bridge.claudeusercontent.com' /etc/hosts
+          ! curl -fsS --max-time 3 http://127.0.0.1:9333/status
+          ! ls ~/Library/LaunchAgents/io.github.shakaibarsalan.tether.*
+          ! claude mcp get chrome-devtools
+          scripts/check.sh --remove-hook && scripts/tab-marker.sh --undo && scripts/tab-guard.sh --undo
+          ! grep -E 'tab-guard|check.sh|__claudeTabMarker' ~/.claude/settings.json

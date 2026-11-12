@@ -1,0 +1,46 @@
+name: release
+
+# Push a tag like v0.3.0. Every test runs on Windows and macOS first; then the
+# downloads are built and the GitHub release is published with the notes from
+# that version's section of CHANGELOG.md.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the downloads
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          # .gitattributes keeps the videos and store artwork out, and gives the
+          # Windows files CRLF line ends and the macOS scripts their exec bit.
+          git archive --format=zip --prefix="tether-$version/" -o "dist/tether-$version-windows.zip" "$GITHUB_REF_NAME"
+          git archive --format=tar.gz --prefix="tether-$version/" -o "dist/tether-$version-macos.tar.gz" "$GITHUB_REF_NAME"
+          ext="$(node -p "require('./extension/manifest.json').version")"
+          (cd extension && zip -q -X "../dist/tether-extension-$ext.zip" manifest.json background.js content.js \
+            icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png)
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v head="## $version" 'index($0, head) == 1 { on = 1; next } on && /^## / { exit } on { print }' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
+          cat notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "Tether ${GITHUB_REF_NAME#v}: Windows and macOS" --notes-file notes.md
