@@ -131,7 +131,7 @@ All your Chrome profiles run in one Chrome, so the DevTools connection can reach
 
 The `extension` folder brings back the look Claude in Chrome had, without its remote bridge:
 
-- the tab joins an orange **Claude** tab group;
+- the tab joins an orange tab group: with the broker, one group per Claude session, named after the chat (**Claude · Daytime job apply run**); without it, one **Claude** group;
 - the tab icon is an hourglass while Claude works and a green ✓ when it's done;
 - a soft orange glow breathes around the page, and a **Claude is working** pill sits at the bottom;
 - an orange cursor with a **Claude** tag glides to where Claude clicks or types, and rings on a click.
@@ -160,6 +160,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\connect-watch-setu
 
 It's a Task Scheduler task for your user, started at login with no window. It only reads: open connections, process names and the session titles the Claude app keeps. Every connection is logged to `%USERPROFILE%\.tether\connect-watch.log`. `scripts\connect-watch.ps1 -Once` lists what's connected right now.
 
+**Notifications are off by default**, because with several sessions they pile up. Everything still goes to the log. To turn them on, create `%USERPROFILE%\.tether\config.json` with `{ "notifications": true }`.
+
+## Keep Claude out of the tab you're using
+
+When a session connects, chrome-devtools-mcp starts out on whatever tab comes first, often the one you're working in, so Claude's first `navigate_page` or click lands there. The tab guard (`hooks/tab-guard.mjs`, a Claude Code hook) stops that:
+
+- before Claude navigates, clicks or types, it has to open its own tab (`new_page`) or deliberately pick one (`select_page`);
+- picking or closing a tab it didn't open is refused once, with the reason; Claude repeats the call only when you asked for that tab;
+- looking (`list_pages`, `take_snapshot`, `take_screenshot`, ...) is never refused.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tab-guard.ps1          # install
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tab-guard.ps1 -Undo    # remove
+```
+
+It remembers, per session, the tabs Claude opened, in `%USERPROFILE%\.tether\tab-guard\` (cleared after two days).
+
 ## Allow once per Chrome start: the broker
 
 Clicking **Allow?** for every Claude Code session gets old, and a prompt you click without reading protects nothing. The broker (`broker/tether-broker.mjs`) connects to Chrome **once**: you click Allow when Chrome starts ("Tether wants Chrome"), and that's it until Chrome closes. Claude Code sessions connect to the broker at `ws://127.0.0.1:9333` instead, and it checks each one before letting it in:
@@ -168,7 +185,9 @@ Clicking **Allow?** for every Claude Code session gets old, and a prompt you cli
 2. it was started by **Claude Code** (`claude.exe`) whose Authenticode signature is valid and from **Anthropic, PBC**;
 3. that `claude.exe` was started by the **Claude desktop app**, also validly signed by Anthropic.
 
-Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`. Either way you get a notification: **Claude is using Chrome: *session title*** or **Tether blocked *program* from Chrome**.
+Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`, and the decision goes to the log. The checks run in one long-lived PowerShell worker (about a second each, instead of PowerShell starting up every time, which on a busy or full disk could take long enough to refuse real sessions), and a session that reconnects is let straight back in while its process lives.
+
+The broker also tells the extension which session each tab belongs to: the tab-marker hook carries a placeholder that the broker fills with that session's id and chat title, so each session gets its own tab group named after the chat.
 
 Inside the one connection each session gets its own browser session (`Target.attachToBrowserTarget`), so its commands and events stay its own and a session that closes never disturbs another. `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused. The broker listens on 127.0.0.1 only and refuses requests with an `Origin` header or a foreign `Host`. Signature checks on the few-hundred-MB `claude.exe` take seconds, so the broker keeps each answer in memory for as long as the file's size and time stay the same.
 

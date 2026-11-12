@@ -95,6 +95,13 @@ const C = await puppeteer.connect({ browserWSEndpoint: ep });
 const closeError = (closeReply.error && closeReply.error.message) || '';
 ok('Browser.close is refused and Chrome keeps running', /blocked by Tether/.test(closeError) && (await titles(C)).includes('Tab B'), closeError);
 
+step('session placeholder');
+// The tab-marker hook carries __TETHER_SESSION__; the broker swaps in this client's session.
+const tokenRaw = await (await C.pages())[0].evaluate(() => '__TETHER_SESSION__');
+let token = {};
+try { token = JSON.parse(Buffer.from(tokenRaw, 'base64').toString('utf8')); } catch { /* left as is */ }
+ok("the broker fills in the client's session for the tab marker", /^x\d+$/.test(token.id || ''), JSON.stringify(token));
+
 step('raw session check');
 // raw protocol: a session id the client was never given is refused
 const raw = await new Promise((resolve, reject) => {

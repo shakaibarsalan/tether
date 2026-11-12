@@ -28,7 +28,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 
@@ -182,8 +182,10 @@ function refuse(client, msg, code, message) {
 }
 
 function forward(client, data) {
+  let text = data.toString();
+  if (text.includes(SESSION_MARK)) text = text.split(SESSION_MARK).join(sessionToken(client));
   let msg;
-  try { msg = JSON.parse(data.toString()); } catch { return; }
+  try { msg = JSON.parse(text); } catch { return; }
   if (typeof msg.id !== 'number' || typeof msg.method !== 'string') return;
   if (BLOCKED.has(msg.method)) { refuse(client, msg, -32000, `${msg.method} is blocked by Tether`); return; }
   if (!up || !up.open) { refuse(client, msg, -32000, 'Tether is not connected to Chrome'); return; }
@@ -203,7 +205,7 @@ function forward(client, data) {
 }
 
 async function onClient(ws, who) {
-  const client = { ws, who, browserSession: null, sessions: new Set(), queue: [], closed: false };
+  const client = { ws, who, browserSession: null, sessions: new Set(), queue: [], closed: false, session: sessionOf(who) };
   clients.add(client);
   ws.on('message', (data) => { if (client.browserSession) forward(client, data); else client.queue.push(data); });
   ws.on('error', () => {});
@@ -234,21 +236,64 @@ function dropClient(client) {
   log(`${client.who.label}: left`);
 }
 
-// Run connect-watch.ps1 with these arguments and parse the JSON it prints.
-function runCheck(extra, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', VERIFY, ...extra],
-      { windowsHide: true });
-    let out = '';
-    const timer = setTimeout(() => { child.kill(); reject(new Error('check timed out')); }, timeoutMs);
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('error', (e) => { clearTimeout(timer); reject(e); });
-    child.on('close', () => {
-      clearTimeout(timer);
-      try { resolve(JSON.parse(out)); } catch { reject(new Error('check failed')); }
-    });
-  });
+// ------------------------------------------------------------- the checks
+
+// One long-running PowerShell (connect-watch.ps1 -Serve) answers the checks line
+// by line. Starting PowerShell costs seconds on a busy PC, or minutes when the
+// disk is full; a check through the running worker takes about one second.
+class Worker {
+  constructor() { this.proc = null; this.queue = []; this.busy = null; this.buf = ''; }
+
+  start() {
+    const proc = spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', VERIFY,
+      '-Serve', '-ServerPort', String(PORT)], { windowsHide: true });
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (d) => this.onData(d));
+    proc.on('error', () => {});
+    proc.on('exit', () => { if (this.proc === proc) { this.proc = null; this.fail(new Error('check worker stopped')); } });
+    this.proc = proc;
+    this.buf = '';
+  }
+
+  onData(d) {
+    this.buf += d;
+    let i;
+    while ((i = this.buf.indexOf('\n')) >= 0) {
+      const line = this.buf.slice(0, i).trim();
+      this.buf = this.buf.slice(i + 1);
+      if (!line || !this.busy) continue;
+      const job = this.busy;
+      this.busy = null;
+      clearTimeout(job.timer);
+      try { job.resolve(JSON.parse(line)); } catch { job.reject(new Error('check failed')); }
+      this.next();
+    }
+  }
+
+  fail(err) {
+    if (this.busy) { clearTimeout(this.busy.timer); this.busy.reject(err); this.busy = null; }
+    this.next();
+  }
+
+  next() {
+    if (this.busy || !this.queue.length) return;
+    if (!this.proc) this.start();
+    const job = this.queue.shift();
+    this.busy = job;
+    job.timer = setTimeout(() => {   // a stuck worker is replaced by a fresh one
+      const p = this.proc;
+      this.proc = null;
+      try { p.kill(); } catch { /* gone */ }
+      this.fail(new Error('check timed out'));
+    }, job.timeoutMs);
+    this.proc.stdin.write(job.line + '\n');
+  }
+
+  ask(line, timeoutMs = 90000) {
+    return new Promise((resolve, reject) => { this.queue.push({ line, timeoutMs, resolve, reject }); this.next(); });
+  }
 }
+const worker = new Worker();
 
 // claude.exe is a few hundred MB, so checking its signature takes seconds. Keep
 // each answer for as long as the file has the same size and modified time. Only
@@ -259,34 +304,57 @@ function signedByAnthropic(file) {
   try { st = fs.statSync(file); } catch { return Promise.resolve(false); }
   const key = `${file.toLowerCase()}|${st.size}|${st.mtimeMs}`;
   if (!signatures.has(key)) {
-    const p = runCheck(['-CheckSignature', file], 90000).then((r) => r.Signed === true);
+    const p = worker.ask(`sig ${file}`, 180000).then((r) => r.Signed === true);
     p.catch(() => signatures.delete(key)); // a failed check is tried again next time
     signatures.set(key, p);
   }
   return signatures.get(key).catch(() => false);
 }
 
-// Who is on the other end of this TCP connection? connect-watch.ps1 finds the
-// process and its parents; the broker then checks the two signatures.
+// Which process owns the client end of this connection? netstat answers in a
+// fraction of a second, without PowerShell.
+function pidOf(remotePort) {
+  return new Promise((resolve) => {
+    execFile('netstat', ['-ano', '-p', 'TCP'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      if (err) { resolve(0); return; }
+      for (const line of String(stdout).split(/\r?\n/)) {
+        const m = /^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+\S+\s+(\d+)\s*$/i.exec(line);
+        if (m && Number(m[1]) === remotePort && Number(m[2]) === PORT) { resolve(Number(m[3])); return; }
+      }
+      resolve(0);
+    });
+  });
+}
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+// chrome-devtools-mcp processes already checked and let in. A session that
+// reconnects gets straight back in; an entry goes when its process ends.
+const approved = new Map();
+setInterval(() => { for (const pid of approved.keys()) if (!alive(pid)) approved.delete(pid); }, 30000).unref();
+
+// Who is on the other end of this TCP connection? The worker finds the process
+// and its parents; the broker then checks the two signatures.
 async function verifyClient(remotePort) {
+  const pid = await pidOf(remotePort);
+  if (pid && approved.has(pid) && alive(pid)) return { ...approved.get(pid), again: true };
   let v;
-  try {
-    v = await runCheck(['-VerifyClientPort', String(remotePort), '-ServerPort', String(PORT), '-SkipSignatures']);
-  } catch (e) {
-    return { allowed: false, label: `client :${remotePort}`, reason: e.message, info: {} };
-  }
+  try { v = await worker.ask(`verify ${remotePort}`); } catch (e) { v = { Error: e.message }; }
+  if (v.Error) return { allowed: false, label: `client :${remotePort}`, reason: v.Error, info: {} };
   const answer = { allowed: v.Allowed === true, label: v.Label || `client :${remotePort}`, reason: v.Reason || '', info: v };
   if (answer.allowed) {
     const [cli, app] = await Promise.all([signedByAnthropic(v.ClaudePath), signedByAnthropic(v.AppPath)]);
     if (!cli) Object.assign(answer, { allowed: false, reason: `Claude Code isn't signed by Anthropic (${v.ClaudePath})` });
     else if (!app) Object.assign(answer, { allowed: false, reason: `the Claude app isn't signed by Anthropic (${v.AppPath})` });
   }
+  if (answer.allowed && v.ProcessId) approved.set(v.ProcessId, answer);
   return answer;
 }
 
-// Say what the broker decided, through the connect watch's notifications.
+// Log what the broker decided through the connect watch (which only shows a
+// notification when ~/.tether/config.json turns them on).
 function notify(answer) {
-  if (!NOTIFY) return;
+  if (!NOTIFY || answer.again) return;
   const v = answer.info || {};
   const toast = answer.allowed
     ? { Kind: 'broker-allowed', Title: `Claude is using Chrome: ${v.Session || 'a Claude session'}`,
@@ -294,14 +362,38 @@ function notify(answer) {
     : { Kind: 'broker-blocked', Title: `Tether blocked ${v.Program || 'a program'} from Chrome`,
         Lines: [answer.label, `Why: ${answer.reason}`], Hint: 'Refused. Nothing to do unless you expected it.' };
   toast.ProcessId = v.ProcessId || 0;
-  runCheck(['-ShowToast', JSON.stringify(toast)], 30000).catch(() => {});
+  worker.ask(`toast ${JSON.stringify(toast)}`, 30000).catch(() => {});
 }
 
 // Check the running claude.exe programs now, so the first session doesn't wait.
 function warmUp() {
-  runCheck(['-ClaudeExePaths'], 30000)
-    .then((paths) => { for (const p of [].concat(paths || [])) signedByAnthropic(p); })
+  worker.ask('paths', 60000)
+    .then((r) => { for (const p of [].concat((r && r.Paths) || [])) signedByAnthropic(p); })
     .catch(() => {});
+}
+
+// ------------------------------------------------------------- session names
+
+// The tab-marker hook carries the placeholder below. For each client the broker
+// swaps it for that client's session, base64 JSON { id, title }, so the
+// extension can give every Claude session its own tab group, named after the
+// chat. Titles of new sessions appear later, so they're looked up again now
+// and then.
+const SESSION_MARK = '__TETHER_SESSION__';
+let anonymous = 0;
+
+function sessionOf(who) {
+  const v = who.info || {};
+  return { id: v.ClaudePid ? `c${v.ClaudePid}` : `x${++anonymous}`, title: v.Title || '', claudePid: v.ClaudePid || 0, checkedAt: Date.now() };
+}
+
+function sessionToken(client) {
+  const s = client.session;
+  if (s.claudePid && Date.now() - s.checkedAt > 30000) {
+    s.checkedAt = Date.now();
+    worker.ask(`session ${s.claudePid}`, 30000).then((r) => { if (r && r.Title) s.title = r.Title; }).catch(() => {});
+  }
+  return Buffer.from(JSON.stringify({ id: s.id, title: s.title }), 'utf8').toString('base64');
 }
 
 // ------------------------------------------------------------- server

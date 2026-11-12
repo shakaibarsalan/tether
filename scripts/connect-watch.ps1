@@ -81,6 +81,8 @@ param(
     [string]$CheckSignature = '',
     [switch]$ClaudeExePaths,
     [string]$ShowToast = '',
+    [int]$SessionForPid = 0,
+    [switch]$Serve,
     [int]$IntervalMs = 500,
     [string]$ChromeUserData = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),
     [string]$LogFile = (Join-Path $env:USERPROFILE '.tether\connect-watch.log')
@@ -262,9 +264,10 @@ function Get-ConnectionInfo([int]$ProcId, $Table) {
     }
 
     $info = [ordered]@{ Kind = ''; ProcessId = $ProcId; Program = $name; Chain = $chainText; Session = $null; Title = ''; Lines = @(); Hint = '';
-                        ClaudePath = ''; AppPath = '' }
+                        ClaudePath = ''; AppPath = ''; ClaudePid = 0 }
     if ($claudeAt -ge 0) {
         $info.ClaudePath = [string]$chain[$claudeAt].ExecutablePath
+        $info.ClaudePid = [int]$chain[$claudeAt].ProcessId
         if ($claudeAt + 1 -lt $chain.Count) { $info.AppPath = [string]$chain[$claudeAt + 1].ExecutablePath }
     }
     if ($self -and [string]$self.CommandLine -match 'tether-broker\.mjs') {
@@ -299,7 +302,17 @@ function Get-ConnectionInfo([int]$ProcId, $Table) {
     return [pscustomobject]$info
 }
 
+# Notifications are off unless %USERPROFILE%\.tether\config.json says
+# { "notifications": true }. Everything is still written to the log.
+function Test-NotificationsOn {
+    try {
+        $cfg = Get-Content -LiteralPath (Join-Path $env:USERPROFILE '.tether\config.json') -Raw -ErrorAction Stop | ConvertFrom-Json
+        return [bool]$cfg.notifications
+    } catch { return $false }
+}
+
 function Show-Toast($Info) {
+    if (-not (Test-NotificationsOn)) { return $false }
     try {
         $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
         $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
@@ -392,13 +405,13 @@ if ($ExplainPid) {
     exit 0
 }
 
-if ($VerifyClientPort) {
-    $conn = Get-NetTCPConnection -LocalPort $VerifyClientPort -RemotePort $ServerPort -State Established -ErrorAction SilentlyContinue | Select-Object -First 1
-    $answer = [ordered]@{ Allowed = $false; Reason = 'connection not found'; Label = "client :$VerifyClientPort"; Kind = '';
-                          Program = ''; ProcessId = 0; Chain = ''; Session = ''; Folder = ''; ClaudePath = ''; AppPath = '' }
+function Get-VerifyAnswer([int]$ClientPort, [int]$Port, [bool]$Signatures) {
+    $conn = Get-NetTCPConnection -LocalPort $ClientPort -RemotePort $Port -State Established -ErrorAction SilentlyContinue | Select-Object -First 1
+    $answer = [ordered]@{ Allowed = $false; Reason = 'connection not found'; Label = "client :$ClientPort"; Kind = '';
+                          Program = ''; ProcessId = 0; Chain = ''; Session = ''; Folder = ''; ClaudePath = ''; AppPath = ''; ClaudePid = 0; Title = '' }
     if ($conn) {
         $info = Get-ConnectionInfo ([int]$conn.OwningProcess) $null
-        $v = Test-ClientAllowed $info (-not $SkipSignatures)
+        $v = Test-ClientAllowed $info $Signatures
         $answer.Allowed = [bool]$v.Allowed
         $answer.Reason = $v.Reason
         $answer.Kind = $info.Kind
@@ -407,6 +420,8 @@ if ($VerifyClientPort) {
         $answer.Chain = $info.Chain
         $answer.ClaudePath = $info.ClaudePath
         $answer.AppPath = $info.AppPath
+        $answer.ClaudePid = $info.ClaudePid
+        if ($info.Session) { $answer.Title = [string]$info.Session.Title }
         if ($info.Kind -like 'claude-*') {
             $answer.Session = Get-SessionLabel $info
             $answer.Folder = if ($info.Session -and $info.Session.Folder) { $info.Session.Folder } else { '' }
@@ -415,12 +430,56 @@ if ($VerifyClientPort) {
             $answer.Label = "$($info.Program) (pid $($info.ProcessId))"
         }
     }
-    Write-Utf8Out (ConvertTo-Json -InputObject $answer -Compress)
+    return $answer
+}
+
+function Get-SessionAnswer([int]$ClaudePid) {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId=$ClaudePid" -ErrorAction SilentlyContinue
+    $s = if ($p) { Get-ClaudeSessionUncached $p } else { $null }
+    return [ordered]@{ Title = [string]$s.Title; Folder = [string]$s.Folder; Id = [string]$s.Id }
+}
+
+# For the broker: one long-running PowerShell that answers line by line, so a
+# check doesn't pay for starting PowerShell every time (seconds on a busy PC).
+# Requests: "verify <clientPort>", "session <claudePid>", "sig <path>", "paths",
+# "toast <json>". Each answer is one line of JSON.
+if ($Serve) {
+    try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch {}
+    while ($null -ne ($line = [Console]::In.ReadLine())) {
+        $cmd, $arg = ($line.Trim() -split ' ', 2)
+        try {
+            $out = switch ($cmd) {
+                'verify'  { Get-VerifyAnswer ([int]$arg) $ServerPort $false }
+                'session' { Get-SessionAnswer ([int]$arg) }
+                'sig'     { [ordered]@{ Path = $arg; Signed = (Test-AnthropicSigned $arg) } }
+                'paths'   { [ordered]@{ Paths = @(Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ForEach-Object { [string]$_.ExecutablePath } | Where-Object { $_ } | Sort-Object -Unique) } }
+                'toast'   { $t = $arg | ConvertFrom-Json
+                            $i = [pscustomobject]@{ Kind = [string]$t.Kind; Title = [string]$t.Title; Lines = @($t.Lines); Hint = [string]$t.Hint; ProcessId = [int]$t.ProcessId; Chain = '' }
+                            Write-Log ("broker: " + (Format-Info $i)); [ordered]@{ Shown = (Show-Toast $i) } }
+                default   { [ordered]@{ Error = "unknown request: $cmd" } }
+            }
+        } catch {
+            $out = [ordered]@{ Error = $_.Exception.Message }
+        }
+        Write-Utf8Out ((ConvertTo-Json -InputObject $out -Compress -Depth 4) + "`n")
+    }
+    exit 0
+}
+
+if ($VerifyClientPort) {
+    Write-Utf8Out (ConvertTo-Json -InputObject (Get-VerifyAnswer $VerifyClientPort $ServerPort (-not $SkipSignatures)) -Compress)
     exit 0
 }
 
 if ($CheckSignature) {
     Write-Utf8Out (ConvertTo-Json -InputObject ([ordered]@{ Path = $CheckSignature; Signed = (Test-AnthropicSigned $CheckSignature) }) -Compress)
+    exit 0
+}
+
+if ($SessionForPid) {
+    # The title and folder of the Claude Code session running as this claude.exe
+    # (the broker refreshes tab-group names with it: new sessions get a title later).
+    Write-Utf8Out (ConvertTo-Json -InputObject (Get-SessionAnswer $SessionForPid) -Compress)
     exit 0
 }
 

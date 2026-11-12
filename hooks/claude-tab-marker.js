@@ -9,6 +9,16 @@ async () => {
   // installs itself once per page, and keeps the title prefix when the site
   // changes its title. Nothing here blocks clicks (pointer-events: none).
   const id = Math.random().toString(36).slice(2);
+  // The Tether broker swaps the placeholder below for this Claude session's
+  // { id, title } (base64), so each session gets its own tab group, named after
+  // the chat. Without the broker it stays as it is and there's no session.
+  let session = null;
+  try {
+    const raw = '__TETHER_SESSION__';
+    if (!raw.startsWith('__')) {
+      session = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(raw), (c) => c.charCodeAt(0))));
+    }
+  } catch (e) { session = null; }
   const extension = await new Promise((resolve) => {
     const onMessage = (e) => {
       if (e.data && e.data.tether === 'ack' && e.data.id === id) {
@@ -17,7 +27,7 @@ async () => {
       }
     };
     addEventListener('message', onMessage);
-    postMessage({ tether: 'claude-active', id }, '*');
+    postMessage({ tether: 'claude-active', id, session }, '*');
     setTimeout(() => { removeEventListener('message', onMessage); resolve(false); }, 300);
   });
   if (extension) return 'tether extension';

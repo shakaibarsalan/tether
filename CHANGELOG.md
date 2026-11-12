@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Tab guard:** `hooks/tab-guard.mjs` (installed by `scripts/tab-guard.ps1`) stops Claude from acting in the tab you're using: it must open its own tab or pick one first, and a tab it didn't open is refused once. A session had taken over a Gmail tab the user was working in.
+- **One tab group per session, named after the chat:** the broker fills the tab-marker hook's `__TETHER_SESSION__` placeholder with the client's session id and title (looked up again every 30 s, since new sessions get a title later); the extension keeps a group per session per window and renames it when the title arrives.
+- **Broker checks:** a long-lived PowerShell worker (`connect-watch.ps1 -Serve`) answers in about a second instead of a new PowerShell per check, which on a full disk timed out and refused real sessions; reconnecting processes that were already let in skip the check (pid via netstat).
+- **Notifications off by default:** turn them on with `{ "notifications": true }` in `%USERPROFILE%\.tether\config.json`.
+
 - **Broker:** `broker/tether-broker.mjs` holds one DevTools connection to Chrome, so Chrome asks **Allow?** once per Chrome start instead of once per Claude Code session. Sessions connect to it on `ws://127.0.0.1:9333` and get in only if they are chrome-devtools-mcp started by a Claude desktop session whose `claude.exe` and app are both validly signed by Anthropic, PBC; everything else gets 403 and a notification. Each session gets its own browser session (`Target.attachToBrowserTarget`); `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused; requests with an Origin or a foreign Host are refused. One dependency, `ws`, pinned. `scripts/broker-setup.ps1` installs it as a login task and points Claude Code at it (`-Status`, `-Undo`); `install.ps1 -Broker` includes it.
 - **Connect watch:** names the broker ("Tether wants Chrome"), shows the broker's decisions, answers its `-VerifyClientPort` checks, and finds the title of brand-new sessions (no id on the command line) by start time.
 - **Check script:** recognises the broker as a known client.

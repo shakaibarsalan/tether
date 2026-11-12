@@ -36,21 +36,29 @@
     const d = e.data;
     if (!d || typeof d !== 'object' || d.tether !== 'claude-active') return;
     try { postMessage({ tether: 'ack', id: String(d.id || '') }, '*'); } catch (err) { /* ignore */ }
-    onSignal(true, Date.now());
+    onSignal(true, Date.now(), cleanSession(d.session));
   });
+
+  // Which Claude session this is ({ id, title }, filled in by the Tether broker),
+  // so each session gets its own tab group named after the chat.
+  function cleanSession(s) {
+    if (!s || typeof s !== 'object' || typeof s.id !== 'string' || !/^[\w-]{1,40}$/.test(s.id)) return null;
+    const title = typeof s.title === 'string' ? s.title.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80) : '';
+    return { id: s.id, title };
+  }
 
   addEventListener('pointerdown', (e) => {
     if (e.isTrusted) lastClick = { x: e.clientX, y: e.clientY, t: Date.now() };
   }, { capture: true, passive: true });
 
   // A page Claude just navigated to: keep the working look going.
-  send('tether:hello', (res) => {
+  send('tether:hello', null, (res) => {
     if (res && res.working && state === 'idle') onSignal(false, res.last);
   });
 
-  function send(type, cb) {
+  function send(type, extra, cb) {
     try {
-      chrome.runtime.sendMessage({ type }, (res) => {
+      chrome.runtime.sendMessage({ type, ...(extra || {}) }, (res) => {
         void chrome.runtime.lastError; // the extension was reloaded: ignore
         if (cb) cb(res);
       });
@@ -62,9 +70,9 @@
     else fn();
   }
 
-  function onSignal(fromClaude, at) {
+  function onSignal(fromClaude, at, session) {
     lastSignal = Math.max(lastSignal, at || Date.now());
-    if (fromClaude) send('tether:working');
+    if (fromClaude) send('tether:working', { session: session || null });
     whenReady(() => {
       if (state !== 'working') startWorking();
       if (fromClaude) showAction();
@@ -92,7 +100,7 @@
 
   function finish() {
     state = 'done';
-    send('tether:done');
+    send('tether:done', null);
     const u = ensureUI();
     u.glow.classList.remove('on');
     setPill('done');

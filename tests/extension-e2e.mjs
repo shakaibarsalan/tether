@@ -126,6 +126,32 @@ await plain.setContent('<title>Plain</title><p>no content script here</p>');
 const r2 = await plain.evaluate(`(${HOOK})()`);
 ok('fallback marker without the extension', r2 === 'marked', r2);
 
+// One group per Claude session, named after the chat. The broker fills in
+// { id, title }; here the test posts what the hook would post.
+const signal = (page, session) => page.evaluate((s) => window.postMessage({ tether: 'claude-active', id: 't', session: s }, '*'), session);
+const jobs = { id: 'c111', title: 'Daytime job apply run' };
+const kyc = { id: 'c222', title: 'Custom KYC hosting' };
+const j1 = await browser.newPage(); await j1.goto(`${base}/a`, { waitUntil: 'load' }); await signal(j1, jobs);
+const j2 = await browser.newPage(); await j2.goto(`${base}/b`, { waitUntil: 'load' }); await signal(j2, jobs);
+const k1 = await browser.newPage(); await k1.goto(`${base}/a`, { waitUntil: 'load' }); await signal(k1, kyc);
+await sleep(800);
+const groupsWithTabs = () => sw.evaluate(async () => {
+  const out = {};
+  for (const g of await chrome.tabGroups.query({})) out[g.title] = (await chrome.tabs.query({ groupId: g.id })).length;
+  return out;
+});
+let g2 = await groupsWithTabs();
+ok('each session gets its own group, named after the chat',
+  g2['Claude · Daytime job apply run'] === 2 && g2['Claude · Custom KYC hosting'] === 1, JSON.stringify(g2));
+await signal(k1, { id: 'c222', title: '' });   // title not known this time
+await sleep(500);
+g2 = await groupsWithTabs();
+ok('a missing title never renames a group back to "Claude"', g2['Claude · Custom KYC hosting'] === 1, JSON.stringify(g2));
+await signal(k1, { id: 'c222', title: 'KYC hosting on Hetzner' });
+await sleep(500);
+g2 = await groupsWithTabs();
+ok('a new chat title renames its group', g2['Claude · KYC hosting on Hetzner'] === 1, JSON.stringify(g2));
+
 ok('no page errors', errors.length === 0, errors.join(' | '));
 await browser.close();
 server.close();
