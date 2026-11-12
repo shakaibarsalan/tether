@@ -3,3 +3,11 @@
 *.bat text eol=crlf
 *.ps1 text eol=crlf
 *.vbs text eol=crlf
+# bash on macOS misreads shell scripts with CRLF line endings
+*.sh text eol=lf
+*.command text eol=lf
+
+# Not in the release downloads (git archive): videos and store artwork
+video/** export-ignore
+store/** export-ignore
+assets/*.gif export-ignore
