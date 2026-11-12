@@ -142,15 +142,15 @@ const groupsWithTabs = () => sw.evaluate(async () => {
 });
 let g2 = await groupsWithTabs();
 ok('each session gets its own group, named after the chat',
-  g2['Claude · Daytime job apply run'] === 2 && g2['Claude · Custom KYC hosting'] === 1, JSON.stringify(g2));
+  g2['Daytime job apply run'] === 2 && g2['Custom KYC hosting'] === 1, JSON.stringify(g2));
 await signal(k1, { id: 'c222', title: '' });   // title not known this time
 await sleep(500);
 g2 = await groupsWithTabs();
-ok('a missing title never renames a group back to "Claude"', g2['Claude · Custom KYC hosting'] === 1, JSON.stringify(g2));
+ok('a missing title never renames a group back to "Claude"', g2['Custom KYC hosting'] === 1, JSON.stringify(g2));
 await signal(k1, { id: 'c222', title: 'KYC hosting on Hetzner' });
 await sleep(500);
 g2 = await groupsWithTabs();
-ok('a new chat title renames its group', g2['Claude · KYC hosting on Hetzner'] === 1, JSON.stringify(g2));
+ok('a new chat title renames its group', g2['KYC hosting on Hetzner'] === 1, JSON.stringify(g2));
 
 ok('no page errors', errors.length === 0, errors.join(' | '));
 await browser.close();

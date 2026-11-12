@@ -131,7 +131,7 @@ All your Chrome profiles run in one Chrome, so the DevTools connection can reach
 
 The `extension` folder brings back the look Claude in Chrome had, without its remote bridge:
 
-- the tab joins an orange tab group: with the broker, one group per Claude session, named after the chat (**Claude · Daytime job apply run**); without it, one **Claude** group;
+- the tab joins an orange tab group: with the broker, one group per Claude session, named after the chat (**Daytime job apply run**); without it, one **Claude** group;
 - the tab icon is an hourglass while Claude works and a green ✓ when it's done;
 - a soft orange glow breathes around the page, and a **Claude is working** pill sits at the bottom;
 - an orange cursor with a **Claude** tag glides to where Claude clicks or types, and rings on a click.

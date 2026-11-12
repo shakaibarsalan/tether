@@ -2,7 +2,7 @@
 //
 // Content scripts tell it when Claude starts or stops using a tab. Each Claude
 // Code session gets its own orange tab group per window, named after the chat
-// ("Claude · Daytime job apply run"); the Tether broker supplies the session's
+// ("Daytime job apply run"); the Tether broker supplies the session's
 // id and title. Without them (no broker) tabs share one "Claude" group. It also
 // remembers, per tab, when Claude last acted, so a page Claude just navigated
 // to picks up the "working" look straight away.
@@ -23,11 +23,13 @@ const put = (k, v) => chrome.storage.session.set({ [k]: v });
 const tabKey = (tabId) => `tab:${tabId}`;
 const getRecord = (tabId) => get(tabKey(tabId), { last: 0, done: true, grouped: false });
 
+// The chat's name itself (Chrome shows only about 20 characters on the group
+// chip, so no "Claude ·" prefix; the orange colour says it's Claude). "Claude"
+// until the session has a name.
 function groupTitle(session) {
   const t = session && session.title ? session.title.trim() : '';
   if (!t) return TITLE;
-  const full = `${TITLE} · ${t}`;
-  return full.length > MAX_TITLE ? `${full.slice(0, MAX_TITLE - 1)}…` : full;
+  return t.length > MAX_TITLE ? `${t.slice(0, MAX_TITLE - 1)}…` : t;
 }
 
 function cleanSession(s) {
@@ -84,7 +86,7 @@ async function groupTab(tab, rec, session) {
   const g = await groupInfo(groupId);
   let title = groupTitle(session);
   // a new session's title may not be known yet: never swap a chat name back to plain "Claude"
-  if (title === TITLE && g && g.title && g.title.startsWith(TITLE)) title = g.title;
+  if (title === TITLE && g && g.title) title = g.title;
   if (g && (g.color !== COLOR || g.title !== title)) await chrome.tabGroups.update(groupId, { title, color: COLOR });
   rec.grouped = true;
 }
