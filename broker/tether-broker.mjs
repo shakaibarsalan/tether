@@ -7,10 +7,11 @@
 // Code sessions then connect to the broker at
 //     ws://127.0.0.1:9333/devtools/browser/tether
 // and get in without a prompt, but only after the broker checks who they are
-// (scripts/connect-watch.ps1 -VerifyClientPort):
+// (scripts/connect-watch.ps1 on Windows, scripts/connect-watch.mjs on macOS):
 //   - the program is chrome-devtools-mcp,
-//   - started by Claude Code (claude.exe) signed by Anthropic, PBC,
+//   - started by Claude Code (claude.exe / claude) signed by Anthropic, PBC,
 //   - which the Claude desktop app (also signed by Anthropic) started.
+// Windows checks Authenticode signatures, macOS the Developer ID (codesign).
 // Anything else gets "403 Forbidden", and the connect watch shows who it was.
 //
 // Each client gets its own browser session inside the one connection
@@ -37,13 +38,16 @@ const args = parseArgs(process.argv.slice(2));
 const HOST = '127.0.0.1';
 const PORT = Number(args.port || 9333);
 const PATHNAME = '/devtools/browser/tether';
-const CHROME_DATA = args['chrome-user-data'] || path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data');
+const IS_MAC = process.platform === 'darwin';
+const CHROME_DATA = args['chrome-user-data'] || (IS_MAC
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+  : path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data'));
 const LAZY = Boolean(args.lazy);
 // Only for tests with a throwaway Chrome: skips the check of who connects.
 const ALLOW_ANY = Boolean(args['insecure-allow-any-client']);
 const NOTIFY = !args['no-notify'];
 const LOG = args.log || path.join(os.homedir(), '.tether', 'broker.log');
-const VERIFY = path.join(here, '..', 'scripts', 'connect-watch.ps1');
+const VERIFY = path.join(here, '..', 'scripts', IS_MAC ? 'connect-watch.mjs' : 'connect-watch.ps1');
 const POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const MAX_PAYLOAD = 512 * 1024 * 1024;
 const BLOCKED = new Set([
@@ -241,12 +245,15 @@ function dropClient(client) {
 // One long-running PowerShell (connect-watch.ps1 -Serve) answers the checks line
 // by line. Starting PowerShell costs seconds on a busy PC, or minutes when the
 // disk is full; a check through the running worker takes about one second.
+// On macOS the worker is "node connect-watch.mjs --serve": same requests, same answers.
 class Worker {
   constructor() { this.proc = null; this.queue = []; this.busy = null; this.buf = ''; }
 
   start() {
-    const proc = spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', VERIFY,
-      '-Serve', '-ServerPort', String(PORT)], { windowsHide: true });
+    const proc = IS_MAC
+      ? spawn(process.execPath, [VERIFY, '--serve', '--server-port', String(PORT)], { stdio: ['pipe', 'pipe', 'ignore'] })
+      : spawn(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', VERIFY,
+        '-Serve', '-ServerPort', String(PORT)], { windowsHide: true });
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', (d) => this.onData(d));
     proc.on('error', () => {});
@@ -308,7 +315,9 @@ try { signedOk = new Set(JSON.parse(fs.readFileSync(SIG_FILE, 'utf8'))); } catch
 const signatures = new Map();
 function signedByAnthropic(file) {
   let st;
-  try { st = fs.statSync(file); } catch { return Promise.resolve(false); }
+  // A macOS app is a folder; the seal of its signature changes whenever the app does.
+  const stamped = IS_MAC && String(file).endsWith('.app') ? path.join(file, 'Contents', '_CodeSignature', 'CodeResources') : file;
+  try { st = fs.statSync(stamped); } catch { return Promise.resolve(false); }
   const key = `${file.toLowerCase()}|${st.size}|${st.mtimeMs}`;
   if (signedOk.has(key)) return Promise.resolve(true);
   if (!signatures.has(key)) {
@@ -323,9 +332,22 @@ function signedByAnthropic(file) {
   return signatures.get(key).catch(() => false);
 }
 
-// Which process owns the client end of this connection? netstat answers in a
-// fraction of a second, without PowerShell.
+// Which process owns the client end of this connection? netstat (lsof on macOS)
+// answers in a fraction of a second, without PowerShell.
 function pidOf(remotePort) {
+  if (IS_MAC) {
+    return new Promise((resolve) => {
+      execFile('/usr/sbin/lsof', ['-nP', `-iTCP:${remotePort}`, '-sTCP:ESTABLISHED', '-Fpn'],
+        { timeout: 15000, env: { ...process.env, LC_ALL: 'C' } }, (_err, stdout) => {
+          let pid = 0;
+          for (const line of String(stdout || '').split(/\r?\n/)) {
+            if (line[0] === 'p') pid = Number(line.slice(1));
+            else if (line.startsWith(`n127.0.0.1:${remotePort}->127.0.0.1:${PORT}`)) { resolve(pid); return; }
+          }
+          resolve(0);
+        });
+    });
+  }
   return new Promise((resolve) => {
     execFile('netstat', ['-ano', '-p', 'TCP'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
       if (err) { resolve(0); return; }
