@@ -97,10 +97,15 @@ jobs:
       - name: Everything is gone
         run: |
           set -x
+          # "! cmd" never stops a bash -e script, so say it out loud
+          gone() { if "$@" >/dev/null 2>&1; then echo "still there: $*"; exit 1; fi; }
           scripts/bridge-block.sh --status | grep '^Open'
-          ! grep 'bridge.claudeusercontent.com' /etc/hosts
-          ! curl -fsS --max-time 3 http://127.0.0.1:9333/status
-          ! ls ~/Library/LaunchAgents/io.github.shakaibarsalan.tether.*
-          ! claude mcp get chrome-devtools
+          gone grep 'bridge.claudeusercontent.com' /etc/hosts
+          gone curl -fsS --max-time 3 http://127.0.0.1:9333/status
+          gone ls ~/Library/LaunchAgents/io.github.shakaibarsalan.tether.broker.plist
+          gone ls ~/Library/LaunchAgents/io.github.shakaibarsalan.tether.connect-watch.plist
+          gone launchctl print "gui/$(id -u)/io.github.shakaibarsalan.tether.broker"
+          gone claude mcp get chrome-devtools
+          gone test -d "$HOME/.tether/npm/node_modules/chrome-devtools-mcp"
           scripts/check.sh --remove-hook && scripts/tab-marker.sh --undo && scripts/tab-guard.sh --undo
-          ! grep -E 'tab-guard|check.sh|__claudeTabMarker' ~/.claude/settings.json
+          gone grep -E 'tab-guard|check.sh|__claudeTabMarker' ~/.claude/settings.json

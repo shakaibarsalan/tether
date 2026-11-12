@@ -129,10 +129,14 @@ export function appBundleOf(file) {
 }
 
 // A Claude Code process: the CLI the desktop app starts (claude-code/<version>/.../claude),
-// the native CLI, or the npm CLI. Not the desktop app and not its helpers.
+// the native CLI (~/.local/share/claude/versions/<version>), or the npm CLI. Not
+// the desktop app ("Claude") and not its Electron helpers (--type=...).
 export function isClaudeCode(p) {
   const file = exePath(p);
-  if (path.basename(file) === 'claude' && !/\.app\/Contents\//.test(file) && !/\s--type=/.test(p.args)) return true;
+  const base = path.basename(file);
+  if (/\s--type=/.test(p.args)) return false;
+  if (base === 'claude') return true;
+  if (/\/claude\/versions\/\d+\.\d+\.\d+[^/]*$/.test(file)) return true;
   if (path.basename(file) === 'node' && /@anthropic-ai\/claude-code/.test(p.args)) return true;
   return false;
 }
@@ -240,6 +244,8 @@ function shortCommand(p) {
 
 // ------------------------------------------------------------------ who is it?
 
+const SHELLS = /^\/(usr\/)?bin\/(sh|bash|zsh|dash|env)$/;
+
 export function connectionInfo(pid, table = processTable(), extraRoots = []) {
   const chain = ancestry(table, pid);
   const self = chain[0] || null;
@@ -254,7 +260,12 @@ export function connectionInfo(pid, table = processTable(), extraRoots = []) {
   if (claudeAt >= 0) {
     info.ClaudePath = exePath(chain[claudeAt]);
     info.ClaudePid = chain[claudeAt].pid;
-    const parent = chain[claudeAt + 1];
+    // The app may start Claude Code through a login shell ("zsh -l -c claude ...")
+    // to get your PATH. Look past plain shells; what started them must still be
+    // a signed Claude.app, so a terminal or a shell a session ran is no way in.
+    let at = claudeAt + 1;
+    while (chain[at] && SHELLS.test(exePath(chain[at])) && chain[at + 1]) at++;
+    const parent = chain[at];
     if (parent) info.AppPath = appBundleOf(exePath(parent)) || exePath(parent);
   }
   if (self && /tether-broker\.mjs/.test(self.args)) {
@@ -292,10 +303,12 @@ export function formatInfo(info) {
 
 // "codesign -dvv" output: the signing certificate is the first Authority line.
 // Anthropic's Developer ID, chained to Apple's root, with a matching team id.
+// Apple writes the name without the comma: "Developer ID Application: Anthropic
+// PBC (Q6L2SF6YDW)" (seen on Claude Code from Anthropic's installer).
 export function parseCodesign(text) {
   const authorities = [...String(text).matchAll(/^Authority=(.+)$/gm)].map((m) => m[1].trim());
   const team = (/^TeamIdentifier=(\S+)\s*$/m.exec(String(text)) || [])[1] || '';
-  const leaf = /^Developer ID Application: Anthropic, PBC \(([A-Z0-9]{10})\)$/.exec(authorities[0] || '');
+  const leaf = /^Developer ID Application: Anthropic,? PBC \(([A-Z0-9]{10})\)$/.exec(authorities[0] || '');
   return { authorities, team, anthropic: Boolean(leaf && leaf[1] === team && authorities.includes('Apple Root CA')) };
 }
 

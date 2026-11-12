@@ -191,21 +191,25 @@ class CheckMjsTest(unittest.TestCase):
 
 @unittest.skipUnless(NODE, "Node.js needed")
 class ConnectWatchLogicTest(unittest.TestCase):
-    ANTHROPIC = ("Executable=/Applications/Claude.app/Contents/MacOS/Claude\nIdentifier=com.anthropic.claudefordesktop\n"
-                 "Authority=Developer ID Application: Anthropic, PBC (Q6L2SF6YDW)\nAuthority=Developer ID Certification Authority\n"
+    # the shape of codesign -dvv on Claude Code from Anthropic's installer (CI saw this one)
+    ANTHROPIC = ("Executable=/Users/me/.local/share/claude/versions/2.1.322\nIdentifier=com.anthropic.claude-code\n"
+                 "Authority=Developer ID Application: Anthropic PBC (Q6L2SF6YDW)\nAuthority=Developer ID Certification Authority\n"
                  "Authority=Apple Root CA\nTeamIdentifier=Q6L2SF6YDW\n")
 
     def test_codesign_needs_anthropics_developer_id_with_its_own_team(self):
         cases = {
             "anthropic": self.ANTHROPIC,
+            "anthropic, with a comma": self.ANTHROPIC.replace("Anthropic PBC", "Anthropic, PBC"),
             "other team": self.ANTHROPIC.replace("TeamIdentifier=Q6L2SF6YDW", "TeamIdentifier=ABCDE12345"),
-            "other company": self.ANTHROPIC.replace("Anthropic, PBC", "Anthropic Fan Club"),
+            "other company": self.ANTHROPIC.replace("Anthropic PBC", "Anthropic Fan Club"),
+            "look-alike": self.ANTHROPIC.replace("Anthropic PBC", "Anthropic PBC Tools"),
             "not Apple's chain": self.ANTHROPIC.replace("Authority=Apple Root CA\n", ""),
             "apple": "Authority=Software Signing\nAuthority=Apple Code Signing Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=not set\n",
             "ad hoc": "Signature=adhoc\nTeamIdentifier=not set\n",
         }
         out = node_eval(f"const c = {json.dumps(cases)}; console.log(JSON.stringify(Object.fromEntries(Object.entries(c).map(([k, v]) => [k, w.parseCodesign(v).anthropic]))));")
-        self.assertEqual(out, {"anthropic": True, "other team": False, "other company": False, "not Apple's chain": False, "apple": False, "ad hoc": False})
+        self.assertEqual(out, {"anthropic": True, "anthropic, with a comma": True, "other team": False, "other company": False,
+                               "look-alike": False, "not Apple's chain": False, "apple": False, "ad hoc": False})
 
     def test_lsof_output_gives_both_ends_with_pids(self):
         text = "p501\nf23\nn127.0.0.1:52011->127.0.0.1:9333\np777\nf9\nn127.0.0.1:9333->127.0.0.1:52011\np900\nf4\nn[::1]:6000->[::1]:9222\n"
@@ -422,8 +426,8 @@ class LiveBase(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
 
-    def fake_session(self, app_parent):
-        """chrome-devtools-mcp <- a program called claude (in claude-code/<version>/<hash>/) <- app_parent or this test."""
+    def fake_session(self, app_parent, via_shell=False):
+        """chrome-devtools-mcp <- a program called claude (in claude-code/<version>/<hash>/) <- [/bin/sh <-] a Claude.app, or this test."""
         base = os.path.join(self.dir, "Claude Data")
         claude = os.path.join(base, "claude-code", "9.9.9", "abc123", "claude")
         clone(NODE, claude)
@@ -444,9 +448,15 @@ class LiveBase(unittest.TestCase):
             app = os.path.join(self.dir, "Claude.app", "Contents", "MacOS", "Claude")
             clone(NODE, app)
             app_launcher = os.path.join(self.dir, "launch-app.mjs")
+            if via_shell:
+                # like an app that starts Claude Code through a shell ("; true" so sh can't just exec it)
+                line = '"%s" "%s" --session-id %s; true' % (claude, launcher, sid)
+                start = "spawn('/bin/sh', ['-c', %s]" % json.dumps(line)
+            else:
+                start = "spawn(%s, [%s, '--session-id', %s]" % (json.dumps(claude), json.dumps(launcher), json.dumps(sid))
             with open(app_launcher, "w") as handle:
                 handle.write("import { spawn } from 'node:child_process';\n"
-                             f"spawn({json.dumps(claude)}, [{json.dumps(launcher)}, '--session-id', {json.dumps(sid)}], {{ stdio: ['ignore', 'inherit', 'inherit'] }});\n"
+                             + start + ", { stdio: ['ignore', 'inherit', 'inherit'] });\n"
                              "setTimeout(() => {}, 60000);\n")
             cmd = [app, app_launcher]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, env=env, start_new_session=True)
@@ -482,6 +492,13 @@ class LiveProcessTest(LiveBase):
         answer = self.verify(client_port)           # ...but a copy of node isn't signed by Anthropic
         self.assertFalse(answer["Allowed"])
         self.assertIn("isn't signed by Anthropic", answer["Reason"])
+
+    def test_a_shell_between_the_app_and_claude_code_is_looked_past(self):
+        client_port, _ = self.fake_session(app_parent=True, via_shell=True)
+        answer = self.verify(client_port, "--skip-signatures")
+        self.assertIn("sh", answer["Chain"], answer)
+        self.assertTrue(answer["AppPath"].endswith("/Claude.app"), answer)
+        self.assertTrue(answer["Allowed"], answer)
 
     def test_apple_signed_program_is_not_anthropic(self):
         out = json.loads(subprocess.run([NODE, WATCH, "--check-signature", "/bin/ls"], capture_output=True, text=True, timeout=120).stdout)

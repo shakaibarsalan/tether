@@ -73,7 +73,8 @@ When a program connects to `ws://127.0.0.1:9333`, the broker asks
    started by the **Claude desktop app** (`Claude.app`).
 3. `codesign --verify --strict` must pass for both Claude Code and `Claude.app`, and
    `codesign -dvv` must show the signing certificate **Developer ID Application:
-   Anthropic, PBC** with the same team id, chained to Apple's root.
+   Anthropic PBC** with the same team id (`Q6L2SF6YDW` on Claude Code from
+   Anthropic's installer), chained to Apple's root.
 
 Anything else (a script a session ran, `claude` started from a terminal, another
 program, a web page) gets `403`, and the reason goes to `~/.tether/broker.log`.
