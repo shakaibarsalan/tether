@@ -5,7 +5,7 @@
 //   npm install                                  (in broker/)
 //   node tests/broker-e2e.mjs
 //
-// Set CHROME_PATH if Chrome isn't in the default Windows location. The part with
+// Set CHROME_PATH if Chrome isn't in the default Windows or macOS location. The part with
 // chrome-devtools-mcp runs when it's installed globally (scripts/devtools-setup.ps1).
 import puppeteer from 'puppeteer-core';
 import { spawn, execSync } from 'node:child_process';
@@ -18,7 +18,9 @@ import { createRequire } from 'node:module';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(path.join(repo, 'broker', 'package.json'));
 const { WebSocket } = require('ws');
-const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const chromePath = process.env.CHROME_PATH || (process.platform === 'darwin'
+  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  : 'C:/Program Files/Google/Chrome/Application/chrome.exe');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const ok = (name, cond, extra = '') => { results.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  ' + extra : ''}`); };
@@ -131,6 +133,9 @@ ok('with the check on, other programs get 403', (await statusOf('ws://127.0.0.1:
 step('chrome-devtools-mcp');
 // chrome-devtools-mcp, the real client, through the broker
 let mcpEntry = process.env.CHROME_DEVTOOLS_MCP;
+// scripts/devtools-setup.sh (macOS) installs it in ~/.tether/npm, the .ps1 globally.
+const tetherMcp = path.join(os.homedir(), '.tether', 'npm', 'node_modules', 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js');
+if (!mcpEntry && fs.existsSync(tetherMcp)) mcpEntry = tetherMcp;
 if (!mcpEntry) { try { mcpEntry = path.join(execSync('npm root -g').toString().trim(), 'chrome-devtools-mcp', 'build', 'src', 'bin', 'chrome-devtools-mcp.js'); } catch { /* no npm */ } }
 if (mcpEntry && fs.existsSync(mcpEntry)) {
   const mcp = spawn(process.execPath, [mcpEntry, `--wsEndpoint=${ep}`, '--no-usage-statistics', '--no-performance-crux'],

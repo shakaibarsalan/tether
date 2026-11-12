@@ -4,7 +4,7 @@
 //   npm install --no-save puppeteer-core@24
 //   node tests/extension-e2e.mjs [folder-for-screenshots]
 //
-// Set CHROME_PATH if Chrome isn't in the default Windows location. It acts the
+// Set CHROME_PATH if Chrome isn't in the default Windows or macOS location. It acts the
 // way Claude Code does (a click, typing, a navigation, then nothing for 20 s)
 // and checks the tab group, the tab icon, the hook's fallback and page errors.
 import puppeteer from 'puppeteer-core';
@@ -16,7 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = process.argv[2] || fs.mkdtempSync(path.join(os.tmpdir(), 'tether-e2e-'));
-const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const chromePath = process.env.CHROME_PATH || (process.platform === 'darwin'
+  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  : 'C:/Program Files/Google/Chrome/Application/chrome.exe');
 const HOOK = fs.readFileSync(path.join(repo, 'hooks', 'claude-tab-marker.js'), 'utf8');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
