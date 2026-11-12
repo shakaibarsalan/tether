@@ -33,5 +33,24 @@ Ask Claude to run `list_connected_browsers`. If your browser's deviceId changed
 again with the new ID. The old one is kept.
 
 ### Removing everything
-`uninstall.ps1` removes the DevTools server and the bridge block.
-`scripts\guard-uninstall.ps1` removes the guard. Both back up what they change.
+`uninstall.ps1` removes the broker, the DevTools server, the connect watch and
+the bridge block. `scripts\guard-uninstall.ps1` removes the guard. Both back up
+what they change. On a Mac: `./uninstall.sh` and `scripts/guard-uninstall.sh`.
+
+## macOS
+
+### The bridge is still reachable after Block-Remote.command
+- Run `scripts/bridge-block.sh --status`. Did you type your password when sudo asked?
+- **Quit Chrome completely** (Cmd+Q, not just closing the window), then open it again.
+- `python3 -c "import socket; print(socket.gethostbyname('bridge.claudeusercontent.com'))"`
+  should print `0.0.0.0`. If not, a VPN or DNS tool is answering instead of `/etc/hosts`.
+
+### The broker refuses my Claude desktop sessions
+`~/.tether/broker.log` says why. `node scripts/connect-watch.mjs --once` lists what
+is connected to Chrome, and `--explain-pid <pid>` shows the whole chain for one
+process. Please open an issue with that output.
+
+### The broker or the watch stopped after I changed Node versions
+The LaunchAgents keep the full path of `node`. Run `scripts/broker-setup.sh` and
+`scripts/connect-watch-setup.sh` again (and `scripts/tab-guard.sh` if you use it).
+`scripts/broker-setup.sh --status` shows whether it's running.

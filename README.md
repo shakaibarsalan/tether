@@ -12,7 +12,7 @@ Any Claude session signed in to your account, on any computer, can drive the Chr
 
 [![tests](https://github.com/shakaibarsalan/tether/actions/workflows/test.yml/badge.svg)](https://github.com/shakaibarsalan/tether/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-d97757.svg)](LICENSE)
-![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1f1e1d)
+![Platform: Windows 10/11 and macOS](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20macOS-1f1e1d)
 ![Works with Claude Code](https://img.shields.io/badge/works%20with-Claude%20Code-1f1e1d)
 
 <br>
@@ -57,7 +57,7 @@ The connection is local, so it follows the computer, not the account. Sign in to
 
 | | |
 |---|---|
-| **Closes the remote door** | Points `bridge.claudeusercontent.com` at `0.0.0.0` in the Windows hosts file. No other computer can drive your Chrome, whatever account they use. |
+| **Closes the remote door** | Points `bridge.claudeusercontent.com` at `0.0.0.0` in the hosts file (Windows or `/etc/hosts` on a Mac). No other computer can drive your Chrome, whatever account they use. |
 | **Keeps your browser as it is** | The extension stays installed. Your profiles, tabs and logins are untouched. Nothing to re-login. |
 | **Gives Claude Code a local door** | Installs Google's [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) with `--autoConnect`. Claude Code drives your real Chrome over `127.0.0.1`, and Chrome asks **Allow?** for each new session. |
 | **Works with any Claude account** | Everything lives on the computer, not the account. Switch Claude accounts as often as you like, and the browser and all its logins come with you. |
@@ -83,6 +83,10 @@ What we measured, the version numbers and the open questions are in [docs/how-it
 
 ## Install
 
+Windows and macOS. Download the latest [release](https://github.com/shakaibarsalan/tether/releases/latest) (`tether-<version>-windows.zip` or `tether-<version>-macos.tar.gz`), or clone the repo.
+
+### Windows
+
 **You need:** Windows 10 or 11, Chrome 144+, [Node.js](https://nodejs.org) 20.19+, and [Claude Code](https://code.claude.com).
 
 ```powershell
@@ -104,6 +108,20 @@ Then, once:
 3. Start a **new** Claude Code session. The first time it touches the browser, Chrome asks **Allow?**. Click Allow.
 
 Prefer clicking? `Block-Remote.bat` and `Unblock-Remote.bat` do the bridge part on their own.
+
+### macOS
+
+**You need:** macOS 13 or newer (Apple silicon or Intel), Chrome 144+, [Node.js](https://nodejs.org) 20.19+ (`brew install node`), and [Claude Code](https://code.claude.com).
+
+```bash
+git clone https://github.com/shakaibarsalan/tether
+cd tether
+./install.sh --broker
+```
+
+The same pieces as on Windows: chrome-devtools-mcp (pinned, in `~/.tether/npm`), the connect watch and the broker as LaunchAgents (no sudo), and the bridge block in `/etc/hosts`, the one step that asks for your password. Then quit Chrome completely (Cmd+Q) and open it again, tick `chrome://inspect/#remote-debugging`, and click **Allow** once for the broker.
+
+Every PowerShell command in this README has a macOS twin (`scripts/check.sh`, `scripts/tab-guard.sh`, `./uninstall.sh`, `Block-Remote.command`, ...). [docs/macos.md](docs/macos.md) lists them all, with where things live and how the broker checks Anthropic's signatures with `codesign`.
 
 ## Daily use
 
@@ -238,7 +256,7 @@ The important line is the third one. When the extension updates, `check.ps1` sca
 powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-This removes the broker, the DevTools server, the connect watch and the bridge block. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
+This removes the broker, the DevTools server, the connect watch and the bridge block. On a Mac: `./uninstall.sh`. You can also turn remote debugging off at `chrome://inspect/#remote-debugging`.
 
 ## Optional: the guard hook
 
@@ -260,7 +278,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 
 ## Limits
 
-- **Windows only for now.** The same idea works on macOS and Linux (hosts file plus `--autoConnect`). PRs welcome.
+- **Windows and macOS.** Linux would work the same way (hosts file plus `--autoConnect`). PRs welcome.
 - **Claude in Chrome stops working** while the bridge is blocked, for everyone including you. That's the point. Browser work moves to the DevTools tools.
 - **Hooks and MCP servers are Claude Code features.** The Chat and Cowork tabs in the Claude app don't use them.
 - **Chrome has to be running** for `--autoConnect`, and it asks **Allow?** once per new session (once per Chrome start with the broker).
@@ -275,7 +293,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-69 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. CI runs them on `windows-latest`.
+114 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 
