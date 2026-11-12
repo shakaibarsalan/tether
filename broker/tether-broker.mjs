@@ -293,19 +293,31 @@ class Worker {
     return new Promise((resolve, reject) => { this.queue.push({ line, timeoutMs, resolve, reject }); this.next(); });
   }
 }
+// Two workers, so a quick "who is this?" never waits behind a slow signature check.
 const worker = new Worker();
+const sigWorker = new Worker();
 
-// claude.exe is a few hundred MB, so checking its signature takes seconds. Keep
-// each answer for as long as the file has the same size and modified time. Only
-// this process holds the answers, so nothing outside it can change them.
+// claude.exe is a few hundred MB, so checking its signature takes seconds, or
+// minutes when the PC is busy. Keep each yes for as long as the file has the
+// same path, size and modified time, also on disk, so a broker restart doesn't
+// start over. (Only a yes is kept; a program that can rewrite this file can
+// already replace claude.exe itself.)
+const SIG_FILE = path.join(os.homedir(), '.tether', 'signatures.json');
+let signedOk = new Set();
+try { signedOk = new Set(JSON.parse(fs.readFileSync(SIG_FILE, 'utf8'))); } catch { /* none yet */ }
 const signatures = new Map();
 function signedByAnthropic(file) {
   let st;
   try { st = fs.statSync(file); } catch { return Promise.resolve(false); }
   const key = `${file.toLowerCase()}|${st.size}|${st.mtimeMs}`;
+  if (signedOk.has(key)) return Promise.resolve(true);
   if (!signatures.has(key)) {
-    const p = worker.ask(`sig ${file}`, 180000).then((r) => r.Signed === true);
-    p.catch(() => signatures.delete(key)); // a failed check is tried again next time
+    const p = sigWorker.ask(`sig ${file}`, 10 * 60 * 1000).then((r) => r.Signed === true);
+    p.then((ok) => {
+      if (!ok) return;
+      signedOk.add(key);
+      try { fs.mkdirSync(path.dirname(SIG_FILE), { recursive: true }); fs.writeFileSync(SIG_FILE, JSON.stringify([...signedOk].slice(-50))); } catch { /* kept in memory */ }
+    }, () => signatures.delete(key)); // a failed check is tried again next time
     signatures.set(key, p);
   }
   return signatures.get(key).catch(() => false);
@@ -339,7 +351,7 @@ async function verifyClient(remotePort) {
   const pid = await pidOf(remotePort);
   if (pid && approved.has(pid) && alive(pid)) return { ...approved.get(pid), again: true };
   let v;
-  try { v = await worker.ask(`verify ${remotePort}`); } catch (e) { v = { Error: e.message }; }
+  try { v = await worker.ask(`verify ${remotePort}`, 50000); } catch (e) { v = { Error: e.message }; }
   if (v.Error) return { allowed: false, label: `client :${remotePort}`, reason: v.Error, info: {} };
   const answer = { allowed: v.Allowed === true, label: v.Label || `client :${remotePort}`, reason: v.Reason || '', info: v };
   if (answer.allowed) {
