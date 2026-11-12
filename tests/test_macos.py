@@ -460,7 +460,7 @@ class LiveBase(unittest.TestCase):
                              "setTimeout(() => {}, 60000);\n")
             cmd = [app, app_launcher]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, env=env, start_new_session=True)
-        self.addCleanup(lambda: (os.killpg(proc.pid, 15), proc.wait()))
+        self.addCleanup(lambda: (os.killpg(proc.pid, 15), proc.wait(), proc.stdout.close()))
         client_port = int(proc.stdout.readline())
         return client_port, claude
 

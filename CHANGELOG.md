@@ -6,7 +6,7 @@
 - **Broker on macOS:** `scripts/connect-watch.mjs --serve` answers its checks. `lsof` and `ps` find who connected; Claude Code and `Claude.app` must both pass `codesign --verify --strict` and be signed with Anthropic's Developer ID ("Developer ID Application: Anthropic PBC", team id matching, chained to Apple's root). Windows is unchanged.
 - **Releases:** pushing a `v*` tag runs every test on Windows and macOS, then publishes `tether-<version>-windows.zip`, `tether-<version>-macos.tar.gz`, the extension zip and `SHA256SUMS.txt`, with the notes from this file.
 - **CI:** `macos-latest` runs the unit tests, the broker and extension end-to-end tests against a throwaway Chrome, and a full `./install.sh --broker`, check and `./uninstall.sh` on a fresh Mac.
-- **Tests:** 114 (19 of them macOS only).
+- **Tests:** 115 (20 of them macOS only).
 
 - **Tab guard:** `hooks/tab-guard.mjs` (installed by `scripts/tab-guard.ps1`) stops Claude from acting in the tab you're using: it must open its own tab or pick one first, and a tab it didn't open is refused once. A session had taken over a Gmail tab the user was working in.
 - **One tab group per session, named after the chat:** the broker fills the tab-marker hook's `__TETHER_SESSION__` placeholder with the client's session id and title (looked up again every 30 s, since new sessions get a title later); the extension keeps a group per session per window and renames it when the title arrives.
