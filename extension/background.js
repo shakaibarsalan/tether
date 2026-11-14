@@ -114,9 +114,15 @@ async function handle(msg, tab) {
   }
 }
 
+// One message at a time: two tabs of the same session that speak up together
+// would otherwise both find no group yet, and the chat would get two groups.
+let queue = Promise.resolve();
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender.tab || sender.id !== chrome.runtime.id || !msg || typeof msg.type !== 'string') return false;
-  handle(msg, sender.tab).then(sendResponse, () => sendResponse({ ok: false }));
+  const run = queue.then(() => handle(msg, sender.tab));
+  queue = run.catch(() => {});
+  run.then(sendResponse, () => sendResponse({ ok: false }));
   return true; // answer asynchronously
 });
 

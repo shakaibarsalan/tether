@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Tether",
   "short_name": "Tether",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "See which tabs Claude Code is using: an orange tab group, a working and done tab icon, a soft edge glow and a cursor. Display only.",
   "homepage_url": "https://github.com/shakaibarsalan/tether",
   "minimum_chrome_version": "120",

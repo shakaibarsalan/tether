@@ -4,7 +4,8 @@
 
 - **Old marker on top of the extension, fixed:** the tab-marker hook waited 300 ms for the extension's answer. On a page still busy after loading (LinkedIn, Facebook, any big web app), Chrome can run that timer before the answer even though the answer was sent first, so the hook drew its own frame, badge and 🤖 title on top of the extension's look, and they stayed until the page changed. Now the order of window messages decides: two more messages go out behind the ping, and the extension's answer always arrives before the second one. Without the extension the hook decides in a few milliseconds instead of 300.
 - **Old marker cleaned up:** when the extension answers on a page the hook once marked itself, the frame and badge are removed, and the 🤖 title prefix too (for pages marked by this version).
-- **Tests:** the extension end-to-end test checks a busy page, the clean-up, and that the fallback is quick. Re-run `scripts/tab-marker.ps1` (or `tab-marker.sh`) to put the new hook in `settings.json`.
+- **Extension 1.0.1, one group per chat even when two tabs speak at once:** the service worker now handles one message at a time. Two tabs of the same session signalling together both found no group yet and the chat got two groups with the same name. Reload the extension in `chrome://extensions` to pick it up.
+- **Tests:** the extension end-to-end test checks a busy page, the clean-up, that the fallback is quick, and two tabs of one session signalling at the same moment; it closes the busy page before the group checks and gives a slow machine up to 5 s to group the tabs. Re-run `scripts/tab-marker.ps1` (or `tab-marker.sh`) to put the new hook in `settings.json`.
 
 ## 0.3.0 (2026-11-13)
 

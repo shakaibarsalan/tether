@@ -149,6 +149,7 @@ for (let i = 0; i < 4; i++) {
 }
 ok('hook sees the extension on a busy page', busyResults.every((r) => r === 'tether extension'), JSON.stringify(busyResults));
 ok('no old marker on the busy page', (await busyTab.$$('[data-claude-tab-marker]')).length === 0);
+await busyTab.close(); // its long tasks would slow the tabs below, which may share its process
 
 // A page the hook once marked itself (the extension came later, or an older
 // hook gave up too soon): the next action takes that marker off again.
@@ -179,16 +180,29 @@ ok('frame and badge from an older hook are removed too', r5 === 'tether extensio
 const signal = (page, session) => page.evaluate((s) => window.postMessage({ tether: 'claude-active', id: 't', session: s }, '*'), session);
 const jobs = { id: 'c111', title: 'Daytime job apply run' };
 const kyc = { id: 'c222', title: 'Custom KYC hosting' };
-const j1 = await browser.newPage(); await j1.goto(`${base}/a`, { waitUntil: 'load' }); await signal(j1, jobs);
-const j2 = await browser.newPage(); await j2.goto(`${base}/b`, { waitUntil: 'load' }); await signal(j2, jobs);
-const k1 = await browser.newPage(); await k1.goto(`${base}/a`, { waitUntil: 'load' }); await signal(k1, kyc);
-await sleep(800);
+const j1 = await browser.newPage(); await j1.goto(`${base}/a`, { waitUntil: 'load' });
+const j2 = await browser.newPage(); await j2.goto(`${base}/b`, { waitUntil: 'load' });
+const k1 = await browser.newPage(); await k1.goto(`${base}/a`, { waitUntil: 'load' });
+// both tabs of one session at the same moment: still one group
+await Promise.all([signal(j1, jobs), signal(j2, jobs)]);
+await signal(k1, kyc);
+// title -> tabs in it; "1+1" would mean two groups with the same name
 const groupsWithTabs = () => sw.evaluate(async () => {
   const out = {};
-  for (const g of await chrome.tabGroups.query({})) out[g.title] = (await chrome.tabs.query({ groupId: g.id })).length;
+  for (const g of await chrome.tabGroups.query({})) {
+    const n = (await chrome.tabs.query({ groupId: g.id })).length;
+    out[g.title] = out[g.title] === undefined ? n : `${out[g.title]}+${n}`;
+  }
   return out;
 });
-let g2 = await groupsWithTabs();
+// a slow test machine may take a moment: look again until it's right, for up to 5 s
+const groupsUntil = async (cond) => {
+  const end = Date.now() + 5000;
+  let g = await groupsWithTabs();
+  while (!cond(g) && Date.now() < end) { await sleep(150); g = await groupsWithTabs(); }
+  return g;
+};
+let g2 = await groupsUntil((g) => g['Daytime job apply run'] === 2 && g['Custom KYC hosting'] === 1);
 ok('each session gets its own group, named after the chat',
   g2['Daytime job apply run'] === 2 && g2['Custom KYC hosting'] === 1, JSON.stringify(g2));
 await signal(k1, { id: 'c222', title: '' });   // title not known this time
@@ -196,8 +210,7 @@ await sleep(500);
 g2 = await groupsWithTabs();
 ok('a missing title never renames a group back to "Claude"', g2['Custom KYC hosting'] === 1, JSON.stringify(g2));
 await signal(k1, { id: 'c222', title: 'KYC hosting on Hetzner' });
-await sleep(500);
-g2 = await groupsWithTabs();
+g2 = await groupsUntil((g) => g['KYC hosting on Hetzner'] === 1);
 ok('a new chat title renames its group', g2['KYC hosting on Hetzner'] === 1, JSON.stringify(g2));
 
 ok('no page errors', errors.length === 0, errors.join(' | '));
