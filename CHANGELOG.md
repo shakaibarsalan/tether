@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-11-14)
+
+- **Old marker on top of the extension, fixed:** the tab-marker hook waited 300 ms for the extension's answer. On a page still busy after loading (LinkedIn, Facebook, any big web app), Chrome can run that timer before the answer even though the answer was sent first, so the hook drew its own frame, badge and 🤖 title on top of the extension's look, and they stayed until the page changed. Now the order of window messages decides: two more messages go out behind the ping, and the extension's answer always arrives before the second one. Without the extension the hook decides in a few milliseconds instead of 300.
+- **Old marker cleaned up:** when the extension answers on a page the hook once marked itself, the frame and badge are removed, and the 🤖 title prefix too (for pages marked by this version).
+- **Tests:** the extension end-to-end test checks a busy page, the clean-up, and that the fallback is quick. Re-run `scripts/tab-marker.ps1` (or `tab-marker.sh`) to put the new hook in `settings.json`.
+
 ## 0.3.0 (2026-11-13)
 
 - **macOS:** everything Tether does on Windows now works on a Mac. `./install.sh [--broker]` and `./uninstall.sh`; `scripts/bridge-block.sh` (`/etc/hosts`, asks for your password once, flushes the DNS cache) with `Block-Remote.command` and `Unblock-Remote.command` to double-click; `scripts/devtools-setup.sh` (chrome-devtools-mcp pinned in `~/.tether/npm`, no sudo); the broker and the connect watch as LaunchAgents (`broker-setup.sh`, `connect-watch-setup.sh`, each with `--status` and `--undo`); `scripts/check.sh` (`--hook`, and `--install-hook` to run it at every session start); `tab-marker.sh`, `tab-guard.sh`, `guard-install.sh` and `guard-uninstall.sh`. Every PowerShell command has a twin; [docs/macos.md](docs/macos.md) lists them.

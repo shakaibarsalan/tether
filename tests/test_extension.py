@@ -83,7 +83,9 @@ class HookTest(unittest.TestCase):
         hook = read(HOOK)
         self.assertTrue(hook.lstrip().startswith("async () =>"))
         self.assertIn("tether: 'claude-active'", hook)
-        self.assertIn("e.data.tether === 'ack'", hook)
+        self.assertIn("d.tether === 'ack'", hook)
+        # message order, not a timer, decides whether the extension answered
+        self.assertIn("tether: 'claude-active-after'", hook)
         self.assertIn("__claudeTabMarker", hook)  # the old in-page marker stays as fallback
 
     def test_extension_and_hook_use_the_same_message(self):

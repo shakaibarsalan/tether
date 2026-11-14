@@ -33,8 +33,15 @@ main{padding:32px;max-width:760px} .card{background:#fff;border:1px solid #e7e2d
 button{font:inherit;padding:10px 18px;border-radius:8px;border:0;background:#2b2a28;color:#fff}
 input{font:inherit;padding:10px 12px;border:1px solid #cfc8bd;border-radius:8px;width:280px}</style></head>
 <body><header>Acme Admin</header><main>${body}</main></body></html>`;
+// a page that stays busy for a few seconds after load, like a big web app starting up
+const busyPage = `<!doctype html><title>Busy</title><p>busy</p><script>
+const busy = (ms) => { const t = performance.now(); while (performance.now() - t < ms); };
+let n = 0; const tick = () => { busy(400); if (++n < 6) setTimeout(tick, 0); };
+addEventListener('load', () => setTimeout(tick, 0));
+</script>`;
 const server = http.createServer((req, res) => {
   if (req.url === '/fav.svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end(fav); }
+  if (req.url === '/busy') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(busyPage); }
   const html = req.url.startsWith('/b') ? page('Reports', '<div class="card"><h2>Reports</h2><p>Monthly numbers.</p></div>'.repeat(3))
     : page('Dashboard', '<div class="card"><h2>Alerts</h2><p>Turn alerts on for a trader.</p><button id="go">Save changes</button></div><div class="card"><label>Name<br><input id="name"></label></div><div class="card"><p>More content</p></div>');
   res.writeHead(200, { 'content-type': 'text/html' }); res.end(html);
@@ -125,8 +132,47 @@ await sheet.screenshot({ path: path.join(out, '8-favicons-dark.png') });
 // without the extension the hook falls back to its in-page marker (about:blank gets no content script)
 const plain = await browser.newPage();
 await plain.setContent('<title>Plain</title><p>no content script here</p>');
+const t2 = Date.now();
 const r2 = await plain.evaluate(`(${HOOK})()`);
+const ms2 = Date.now() - t2;
 ok('fallback marker without the extension', r2 === 'marked', r2);
+ok('the fallback decides quickly', ms2 < 1000, `${ms2} ms`);
+
+// A page still busy after load: Chrome can run a timer before a message that
+// was sent earlier, so a hook that waited 300 ms for the extension's answer
+// often gave up and drew the old marker on top of the extension's look.
+const busyTab = await browser.newPage();
+const busyResults = [];
+for (let i = 0; i < 4; i++) {
+  await busyTab.goto(`${base}/busy`, { waitUntil: 'load' });
+  busyResults.push(await busyTab.evaluate(`(${HOOK})()`));
+}
+ok('hook sees the extension on a busy page', busyResults.every((r) => r === 'tether extension'), JSON.stringify(busyResults));
+ok('no old marker on the busy page', (await busyTab.$$('[data-claude-tab-marker]')).length === 0);
+
+// A page the hook once marked itself (the extension came later, or an older
+// hook gave up too soon): the next action takes that marker off again.
+const left = await browser.newPage();
+await left.goto(`${base}/a`, { waitUntil: 'load' });
+const NO_EXTENSION = HOOK.split("'claude-active'").join("'nobody-listens'"); // as if no extension answered
+const marks = () => left.evaluate(() => ({ n: document.querySelectorAll('[data-claude-tab-marker]').length, title: document.title }));
+const r3 = await left.evaluate(`(${NO_EXTENSION})()`);
+const m3 = await marks();
+ok('setup: page marked as if the extension were missing', r3 === 'marked' && m3.n === 2 && m3.title === '🤖 Dashboard', `${r3} ${JSON.stringify(m3)}`);
+const r4 = await left.evaluate(`(${HOOK})()`);
+await left.evaluate(() => { document.title = 'Dashboard 2'; });
+await sleep(100);
+const m4 = await marks();
+ok('the extension\'s answer removes the old marker and title prefix', r4 === 'tether extension' && m4.n === 0 && m4.title === 'Dashboard 2', `${r4} ${JSON.stringify(m4)}`);
+// a page marked by a hook from before this change (no way to stop its title keeper)
+await left.evaluate(() => {
+  window.__claudeTabMarker = true;
+  const d = document.createElement('div');
+  d.setAttribute('data-claude-tab-marker', 'badge');
+  document.body.append(d);
+});
+const r5 = await left.evaluate(`(${HOOK})()`);
+ok('frame and badge from an older hook are removed too', r5 === 'tether extension' && (await marks()).n === 0, r5);
 
 // One group per Claude session, named after the chat. The broker fills in
 // { id, title }; here the test posts what the hook would post.

@@ -33,6 +33,9 @@ Claude Code ──(chrome-devtools-mcp, 127.0.0.1)──▶ your tab
     └─ after each browser action, a PostToolUse hook runs
        hooks/claude-tab-marker.js in that tab:
            postMessage({ tether: 'claude-active' })
+           (two more messages follow it; if no "ack" comes back
+            before the second one, there's no extension and the
+            hook draws its own frame and badge instead)
                          │
                          ▼
        content.js (in the page)      ──▶  background.js (service worker)
