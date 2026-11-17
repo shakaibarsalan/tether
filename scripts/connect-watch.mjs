@@ -420,10 +420,11 @@ export function showToast(info, logFile) {
 
 // ------------------------------------------------------------------ the broker's questions
 
-export function verifyAnswer(clientPort, serverPort, signatures, extraRoots = []) {
+// knownPid: the broker already found the process (lsof), so don't look again.
+export function verifyAnswer(clientPort, serverPort, signatures, extraRoots = [], knownPid = 0) {
   const answer = { Allowed: false, Reason: 'connection not found', Label: `client :${clientPort}`, Kind: '', Program: '', ProcessId: 0,
     Chain: '', Session: '', Folder: '', ClaudePath: '', AppPath: '', ClaudePid: 0, Title: '' };
-  const pid = pidOfClient(clientPort, serverPort);
+  const pid = knownPid > 0 ? knownPid : pidOfClient(clientPort, serverPort);
   if (!pid) return answer;
   const info = connectionInfo(pid, processTable(), extraRoots);
   const v = clientAllowed(info, signatures);
@@ -509,8 +510,9 @@ async function main() {
 
   if (args.serve) {
     // For the broker: one long-running process that answers line by line.
-    // Requests: "verify <clientPort>", "session <claudePid>", "sig <path>",
-    // "paths", "toast <json>".
+    // Requests: "check <clientPort> <pid>" (the broker found the pid),
+    // "verify <clientPort>", "session <claudePid>", "sig <path>", "paths",
+    // "toast <json>".
     const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
     for await (const raw of rl) {
       const line = raw.trim();
@@ -520,7 +522,10 @@ async function main() {
       const arg = at < 0 ? '' : line.slice(at + 1);
       let out;
       try {
-        if (cmd === 'verify') out = verifyAnswer(Number(arg), serverPort, false, roots);
+        if (cmd === 'check') {
+          const [port, pid] = arg.split(' ').map(Number);
+          out = verifyAnswer(port, serverPort, false, roots, pid || 0);
+        } else if (cmd === 'verify') out = verifyAnswer(Number(arg), serverPort, false, roots);
         else if (cmd === 'session') out = sessionAnswer(Number(arg), roots);
         else if (cmd === 'sig') out = { Path: arg, ...signatureOf(arg) };
         else if (cmd === 'paths') out = { Paths: claudePaths() };

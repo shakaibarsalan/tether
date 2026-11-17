@@ -8,8 +8,11 @@ The full test against a throwaway Chrome is tests/broker-e2e.mjs."""
 
 import json
 import os
+import shutil
 import socket
 import subprocess
+import tempfile
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +43,13 @@ class BrokerSourceTest(unittest.TestCase):
         self.assertIn("'insecure-allow-any-client'", self.src)
         self.assertIn("signedByAnthropic(v.ClaudePath)", self.src)
         self.assertIn("signedByAnthropic(v.AppPath)", self.src)
+
+    def test_the_quick_check_has_a_worker_to_itself(self):
+        # "who is this?" must not wait behind signature checks, names or notifications
+        self.assertIn("check ${remotePort} ${pid}", self.src)
+        self.assertEqual(self.src.count("worker.ask("), 1)  # the check only
+        for request in ("`sig ", "`session ", "`toast ", "'paths'"):
+            self.assertIn("slowWorker.ask(" + request, self.src)
 
     def test_blocks_commands_that_close_chrome_or_leak_the_protocol(self):
         for method in ("Browser.close", "Browser.crash", "Target.exposeDevToolsProtocol"):
@@ -85,6 +95,87 @@ class VerifyRuleTest(unittest.TestCase):
         finally:
             client.close()
             server.close()
+
+    @unittest.skipUnless(os.name == "nt" and os.path.exists(POWERSHELL), "Windows PowerShell only")
+    def test_the_broker_worker_answers_verify_and_check(self):
+        # The broker's long-running worker (connect-watch.ps1 -Serve), on real connections.
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        port = server.getsockname()[1]
+        client = socket.create_connection(("127.0.0.1", port))
+        other = socket.create_connection(("127.0.0.1", port))
+        worker = subprocess.Popen([POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WATCH,
+                                   "-Serve", "-ServerPort", str(port)],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+        ask = lambda line: (worker.stdin.write(line + "\n"), worker.stdin.flush(), json.loads(worker.stdout.readline()))[2]
+        try:
+            # finds the owner itself (netstat)
+            v = ask(f"verify {client.getsockname()[1]}")
+            self.assertEqual(v["ProcessId"], os.getpid(), v)
+            self.assertFalse(v["Allowed"], v)
+            # the broker passes the owner it found: no second lookup, no session title
+            c = ask(f"check {other.getsockname()[1]} {os.getpid()}")
+            self.assertEqual(c["ProcessId"], os.getpid(), c)
+            self.assertFalse(c["Allowed"], c)
+            self.assertEqual(c["Title"], "", c)
+            # a port nobody uses: nothing found, no
+            gone = ask("verify 1")
+            self.assertFalse(gone["Allowed"], gone)
+            self.assertEqual(gone["Reason"], "connection not found", gone)
+        finally:
+            worker.stdin.close()
+            worker.wait(timeout=60)
+            worker.stdout.close()
+            client.close()
+            other.close()
+            server.close()
+
+
+NODE = shutil.which("node")
+
+
+@unittest.skipUnless(os.name == "nt" and NODE and os.path.isdir(os.path.join(BROKER, "node_modules", "ws")),
+                     "Windows with broker/node_modules")
+class BrokerOnWindowsTest(unittest.TestCase):
+    """The whole broker on a test port: netstat finds the client, the worker's
+    quick "check" decides. --lazy: it never connects to Chrome, so no Allow."""
+
+    def test_a_plain_program_gets_403_quickly(self):
+        tmp = tempfile.mkdtemp(prefix="tether-broker-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        log = os.path.join(tmp, "broker.log")
+        b = subprocess.Popen([NODE, os.path.join(BROKER, "tether-broker.mjs"), "--port", str(port), "--lazy", "--no-notify",
+                              "--log", log, "--chrome-user-data", tmp], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: (b.kill(), b.wait()))
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        start = time.time()
+        c = socket.create_connection(("127.0.0.1", port), timeout=90)
+        c.sendall(("GET /devtools/browser/tether HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                   "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n" % port).encode())
+        reply = c.recv(200).decode(errors="replace")
+        took = time.time() - start
+        c.close()
+        self.assertIn("403", reply.split("\r\n")[0])
+        self.assertLess(took, 45, f"the check took {took:.1f} s")
+        text = ""
+        for _ in range(100):
+            with open(log, encoding="utf-8") as handle:
+                text = handle.read()
+            if "refused" in text:
+                break
+            time.sleep(0.2)
+        self.assertIn(f"pid {os.getpid()}", text)
+        self.assertNotIn("timed out", text)
 
 
 if __name__ == "__main__":

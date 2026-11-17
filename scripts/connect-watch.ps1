@@ -243,8 +243,10 @@ function Get-ShortCommand($P) {
     return $cl
 }
 
-# What to say about the program with this process id.
-function Get-ConnectionInfo([int]$ProcId, $Table) {
+# What to say about the program with this process id. -NoSession leaves out the
+# chat's title and folder (reading the desktop app's session files is the slow
+# part on a busy PC; the broker asks for them later with "session <pid>").
+function Get-ConnectionInfo([int]$ProcId, $Table, [switch]$NoSession) {
     if (-not $Table) { $Table = Get-ProcessTable }
     $chain = Get-Ancestry $Table $ProcId
     $self = if ($chain.Count) { $chain[0] } else { $null }
@@ -276,7 +278,7 @@ function Get-ConnectionInfo([int]$ProcId, $Table) {
         $info.Lines = @('Allow once: your Claude sessions then get in without asking', "Until Chrome closes. node.exe, pid $ProcId")
         $info.Hint = 'Allow. This is the Tether broker.'
     } elseif ($claudeAt -ge 0) {
-        $s = Get-ClaudeSession $chain[$claudeAt]
+        $s = if ($NoSession) { [pscustomobject]@{ Id = ''; Title = ''; Folder = ''; Account = '' } } else { Get-ClaudeSession $chain[$claudeAt] }
         $info.Session = $s
         $label = if ($s.Title) { $s.Title } elseif ($s.Id) { 'session ' + $s.Id.Substring(0, 8) } else { 'a Claude Code session' }
         $where = if ($s.Folder) { $s.Folder } else { 'folder unknown' }
@@ -405,12 +407,26 @@ if ($ExplainPid) {
     exit 0
 }
 
-function Get-VerifyAnswer([int]$ClientPort, [int]$Port, [bool]$Signatures) {
-    $conn = Get-NetTCPConnection -LocalPort $ClientPort -RemotePort $Port -State Established -ErrorAction SilentlyContinue | Select-Object -First 1
+# Which process owns the client end of 127.0.0.1:$ClientPort -> 127.0.0.1:$Port?
+# netstat answers in a fraction of a second. Get-NetTCPConnection took 4 to 13 s
+# on a busy PC, more in a freshly started PowerShell, and checks timed out.
+function Get-ClientPid([int]$ClientPort, [int]$Port) {
+    foreach ($line in @(netstat -ano -p TCP)) {
+        if ($line -match '^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+\S+\s+(\d+)\s*$' -and
+            [int]$Matches[1] -eq $ClientPort -and [int]$Matches[2] -eq $Port -and [int]$Matches[3] -gt 0) {
+            return [int]$Matches[3]
+        }
+    }
+    return 0
+}
+
+# -ProcId: the broker already found the process with netstat, so don't look again.
+function Get-VerifyAnswer([int]$ClientPort, [int]$Port, [bool]$Signatures, [int]$ProcId = 0, [switch]$NoSession) {
+    if ($ProcId -le 0) { $ProcId = Get-ClientPid $ClientPort $Port }
     $answer = [ordered]@{ Allowed = $false; Reason = 'connection not found'; Label = "client :$ClientPort"; Kind = '';
                           Program = ''; ProcessId = 0; Chain = ''; Session = ''; Folder = ''; ClaudePath = ''; AppPath = ''; ClaudePid = 0; Title = '' }
-    if ($conn) {
-        $info = Get-ConnectionInfo ([int]$conn.OwningProcess) $null
+    if ($ProcId -gt 0) {
+        $info = Get-ConnectionInfo $ProcId $null -NoSession:$NoSession
         $v = Test-ClientAllowed $info $Signatures
         $answer.Allowed = [bool]$v.Allowed
         $answer.Reason = $v.Reason
@@ -441,14 +457,17 @@ function Get-SessionAnswer([int]$ClaudePid) {
 
 # For the broker: one long-running PowerShell that answers line by line, so a
 # check doesn't pay for starting PowerShell every time (seconds on a busy PC).
-# Requests: "verify <clientPort>", "session <claudePid>", "sig <path>", "paths",
-# "toast <json>". Each answer is one line of JSON.
+# Requests: "check <clientPort> <pid>" (the broker found the pid; no session
+# title, so it's quick), "verify <clientPort>", "session <claudePid>",
+# "sig <path>", "paths", "toast <json>". Each answer is one line of JSON.
 if ($Serve) {
     try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch {}
     while ($null -ne ($line = [Console]::In.ReadLine())) {
         $cmd, $arg = ($line.Trim() -split ' ', 2)
         try {
             $out = switch ($cmd) {
+                'check'   { $cp, $procId = ([string]$arg -split ' ', 2)
+                            Get-VerifyAnswer ([int]$cp) $ServerPort $false ([int]$procId) -NoSession }
                 'verify'  { Get-VerifyAnswer ([int]$arg) $ServerPort $false }
                 'session' { Get-SessionAnswer ([int]$arg) }
                 'sig'     { [ordered]@{ Path = $arg; Signed = (Test-AnthropicSigned $arg) } }

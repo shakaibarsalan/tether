@@ -32,6 +32,16 @@ Ask Claude to run `list_connected_browsers`. If your browser's deviceId changed
 (after reinstalling the extension, for example), run `scripts\guard-install.ps1`
 again with the new ID. The old one is kept.
 
+### The broker refuses sessions with "check timed out"
+`%USERPROFILE%\.tether\broker.log` shows `refused client :<port>: check timed out`.
+The check that a session is really Claude's didn't finish in 50 s, usually because
+the PC is out of memory or CPU. Since 0.3.1 it needs about a second (three on a cold
+start); update, then load the new broker with
+`scripts\broker-setup.ps1 -Restart` and click **Allow** in Chrome once. Stopping and
+starting the task in Task Scheduler doesn't restart the broker; the log then says
+`port 9333 is busy`. `scripts\connect-watch.ps1 -ExplainPid <pid>` shows how a
+chrome-devtools-mcp process is judged and how long that takes.
+
 ### Removing everything
 `uninstall.ps1` removes the broker, the DevTools server, the connect watch and
 the bridge block. `scripts\guard-uninstall.ps1` removes the guard. Both back up

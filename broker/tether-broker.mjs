@@ -220,8 +220,12 @@ async function onClient(ws, who) {
     if (client.closed) { callChrome('Target.detachFromTarget', { sessionId }).catch(() => {}); return; }
     client.browserSession = sessionId;
     own(sessionId, client);
-    log(`${who.label}: let in`);
     for (const data of client.queue.splice(0)) forward(client, data);
+    withName(who).then(() => {
+      if (who.info && who.info.Title && !client.session.title) client.session.title = who.info.Title;
+      log(`${who.label}: let in`);
+      if (who.allowed) notify(who); // not for the tests' --insecure-allow-any-client
+    });
   } catch (e) {
     log(`${who.label}: could not reach Chrome: ${e.message}`);
     ws.close(1011, String(e.message).slice(0, 120));
@@ -300,9 +304,10 @@ class Worker {
     return new Promise((resolve, reject) => { this.queue.push({ line, timeoutMs, resolve, reject }); this.next(); });
   }
 }
-// Two workers, so a quick "who is this?" never waits behind a slow signature check.
+// Two workers: "who is this?" has one to itself, so it never waits behind a slow
+// signature check, a chat-name lookup or a notification.
 const worker = new Worker();
-const sigWorker = new Worker();
+const slowWorker = new Worker();
 
 // claude.exe is a few hundred MB, so checking its signature takes seconds, or
 // minutes when the PC is busy. Keep each yes for as long as the file has the
@@ -321,7 +326,7 @@ function signedByAnthropic(file) {
   const key = `${file.toLowerCase()}|${st.size}|${st.mtimeMs}`;
   if (signedOk.has(key)) return Promise.resolve(true);
   if (!signatures.has(key)) {
-    const p = sigWorker.ask(`sig ${file}`, 10 * 60 * 1000).then((r) => r.Signed === true);
+    const p = slowWorker.ask(`sig ${file}`, 10 * 60 * 1000).then((r) => r.Signed === true);
     p.then((ok) => {
       if (!ok) return;
       signedOk.add(key);
@@ -373,7 +378,10 @@ async function verifyClient(remotePort) {
   const pid = await pidOf(remotePort);
   if (pid && approved.has(pid) && alive(pid)) return { ...approved.get(pid), again: true };
   let v;
-  try { v = await worker.ask(`verify ${remotePort}`, 50000); } catch (e) { v = { Error: e.message }; }
+  // With the pid known, the worker skips finding it again and leaves the chat's
+  // name for later (nameSession): both were slow on a busy PC, and checks timed out.
+  const ask = pid ? `check ${remotePort} ${pid}` : `verify ${remotePort}`;
+  try { v = await worker.ask(ask, 50000); } catch (e) { v = { Error: e.message }; }
   if (v.Error) return { allowed: false, label: `client :${remotePort}`, reason: v.Error, info: {} };
   const answer = { allowed: v.Allowed === true, label: v.Label || `client :${remotePort}`, reason: v.Reason || '', info: v };
   if (answer.allowed) {
@@ -396,12 +404,12 @@ function notify(answer) {
     : { Kind: 'broker-blocked', Title: `Tether blocked ${v.Program || 'a program'} from Chrome`,
         Lines: [answer.label, `Why: ${answer.reason}`], Hint: 'Refused. Nothing to do unless you expected it.' };
   toast.ProcessId = v.ProcessId || 0;
-  worker.ask(`toast ${JSON.stringify(toast)}`, 30000).catch(() => {});
+  slowWorker.ask(`toast ${JSON.stringify(toast)}`, 30000).catch(() => {});
 }
 
 // Check the running claude.exe programs now, so the first session doesn't wait.
 function warmUp() {
-  worker.ask('paths', 60000)
+  slowWorker.ask('paths', 60000)
     .then((r) => { for (const p of [].concat((r && r.Paths) || [])) signedByAnthropic(p); })
     .catch(() => {});
 }
@@ -425,9 +433,24 @@ function sessionToken(client) {
   const s = client.session;
   if (s.claudePid && Date.now() - s.checkedAt > 30000) {
     s.checkedAt = Date.now();
-    worker.ask(`session ${s.claudePid}`, 30000).then((r) => { if (r && r.Title) s.title = r.Title; }).catch(() => {});
+    slowWorker.ask(`session ${s.claudePid}`, 30000).then((r) => { if (r && r.Title) s.title = r.Title; }).catch(() => {});
   }
   return Buffer.from(JSON.stringify({ id: s.id, title: s.title }), 'utf8').toString('base64');
+}
+
+// The quick check leaves out the chat's name (finding it reads the desktop app's
+// session files, slow on a busy PC). Look it up after the decision, for the log,
+// the notification and the tab group. Resolves when known, or when it gave up.
+function withName(who) {
+  const v = who.info || {};
+  if (v.Title || !v.ClaudePid || !String(v.Kind || '').startsWith('claude-')) return Promise.resolve(who);
+  return slowWorker.ask(`session ${v.ClaudePid}`, 60000).then((r) => {
+    if (r && r.Title) {
+      Object.assign(v, { Title: r.Title, Session: r.Title, Folder: r.Folder || v.Folder || '' }); // a reconnect starts with it
+      who.label = `Claude session '${r.Title}' (${v.Program}, pid ${v.ProcessId})`;
+    }
+    return who;
+  }, () => who);
 }
 
 // ------------------------------------------------------------- server
@@ -450,7 +473,7 @@ const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxP
 
 server.on('upgrade', async (req, socket, head) => {
   const deny = (status, why) => {
-    log(`refused ${why}`);
+    if (why) log(`refused ${why}`);
     socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   };
   // A web page can open a WebSocket to 127.0.0.1, but it always sends an Origin.
@@ -459,8 +482,11 @@ server.on('upgrade', async (req, socket, head) => {
   let who = { label: `client :${socket.remotePort}` };
   if (!ALLOW_ANY) {
     const v = await verifyClient(socket.remotePort);
-    notify(v);
-    if (!v.allowed) { deny('403 Forbidden', `${v.label}: ${v.reason}`); return; }
+    if (!v.allowed) {
+      deny('403 Forbidden');   // at once; the log line waits for the chat's name
+      withName(v).then(() => { log(`refused ${v.label}: ${v.reason}`); notify(v); });
+      return;
+    }
     who = v;
   }
   if (socket.destroyed) return;

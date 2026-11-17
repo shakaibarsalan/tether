@@ -16,17 +16,19 @@
 #
 #   scripts/broker-setup.sh            install, start at login, point Claude Code at it
 #   scripts/broker-setup.sh --status   Chrome connected? which sessions are in?
+#   scripts/broker-setup.sh --restart  load an update (Chrome asks "Allow?" once more)
 #   scripts/broker-setup.sh --undo     back to "Allow?" per session
 
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
-undo=0; status=0; port=9333
+undo=0; status=0; restart=0; port=9333
 while [ $# -gt 0 ]; do
   case "$1" in
     --undo) undo=1 ;;
     --status) status=1 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --restart) restart=1 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
   shift
@@ -46,6 +48,16 @@ if [ "$status" = 1 ]; then
   s="$(broker_status || true)"
   if [ -n "$s" ]; then say "Broker: $s"; else say "Broker is not answering on 127.0.0.1:$port."; fi
   if [ -f "$LOG" ]; then say ''; say "Last lines of $LOG:"; tail -n 10 "$LOG" | sed 's/^/  /'; fi
+  exit 0
+fi
+
+if [ "$restart" = 1 ]; then
+  [ -f "$(agent_plist broker)" ] || die "The broker LaunchAgent is not installed. Run $0 first."
+  launchctl kickstart -k "gui/$(id -u)/$(agent_label broker)"
+  up=''
+  for _ in $(seq 1 30); do sleep 0.5; up="$(broker_status || true)"; [ -n "$up" ] && break; done
+  [ -n "$up" ] || { warn "The broker isn't answering. Run: $0 --status"; exit 1; }
+  good 'Broker restarted. Chrome asks "Allow?" once more: click Allow.'
   exit 0
 fi
 

@@ -26,11 +26,17 @@
 
 .PARAMETER Status
   Show the task, the broker's state and the last lines of its log.
+
+.PARAMETER Restart
+  Stop the broker and start it again, for example to load an update. Sessions
+  reconnect by themselves; Chrome asks "Allow?" once more. (Stop-ScheduledTask
+  alone doesn't do it: the broker keeps running.)
 #>
 [CmdletBinding()]
 param(
     [switch]$Undo,
     [switch]$Status,
+    [switch]$Restart,
     [string]$TaskName = 'Tether broker',
     [int]$Port = 9333,
     [string]$LogFile = (Join-Path $env:USERPROFILE '.tether\broker.log')
@@ -80,6 +86,17 @@ if ($Status) {
         Write-Host "Last lines of $($LogFile):"
         Get-Content -LiteralPath $LogFile -Tail 10 -Encoding UTF8 | ForEach-Object { Write-Host "  $_" }
     }
+    exit 0
+}
+
+if ($Restart) {
+    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { throw "Task '$TaskName' is not installed. Run this script without -Restart first." }
+    Stop-Brokers
+    Start-ScheduledTask -TaskName $TaskName
+    $up = $null
+    for ($i = 0; $i -lt 30 -and -not $up; $i++) { Start-Sleep -Milliseconds 500; $up = Get-BrokerStatus }
+    if (-not $up) { Write-Host "The broker isn't answering. Run with -Status." -ForegroundColor Yellow; exit 1 }
+    Write-Host 'Broker restarted. Chrome asks "Allow?" once more: click Allow.' -ForegroundColor Green
     exit 0
 }
 

@@ -203,7 +203,7 @@ Clicking **Allow?** for every Claude Code session gets old, and a prompt you cli
 2. it was started by **Claude Code** (`claude.exe`) whose Authenticode signature is valid and from **Anthropic, PBC**;
 3. that `claude.exe` was started by the **Claude desktop app**, also validly signed by Anthropic.
 
-Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`, and the decision goes to the log. The checks run in one long-lived PowerShell worker (about a second each, instead of PowerShell starting up every time, which on a busy or full disk could take long enough to refuse real sessions), and a session that reconnects is let straight back in while its process lives.
+Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`, and the decision goes to the log. The checks run in one long-lived PowerShell worker (about a second each, instead of PowerShell starting up every time, which on a busy or full disk could take long enough to refuse real sessions), and a session that reconnects is let straight back in while its process lives. The broker finds the client's process with `netstat` and the worker only walks its parents; the chat's name is looked up after the decision, by a second worker that also does the signature checks and notifications.
 
 The broker also tells the extension which session each tab belongs to: the tab-marker hook carries a placeholder that the broker fills with that session's id and chat title, so each session gets its own tab group named after the chat.
 
@@ -212,6 +212,7 @@ Inside the one connection each session gets its own browser session (`Target.att
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1          # install, start at login, point Claude Code at it
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1 -Status  # Chrome connected? which sessions are in?
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1 -Restart # load an update (Allow? once more)
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\broker-setup.ps1 -Undo    # back to Allow? per session
 ```
 
@@ -293,7 +294,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-115 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
+118 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 
