@@ -53,34 +53,56 @@ async function rememberGroup(groupId) {
   if (!list.includes(groupId)) { list.push(groupId); await put('groups', list.slice(-200)); }
 }
 
-// This session's group in this window, if it still exists.
+// This chat's one group in this profile, in whatever window it is: the one made
+// before or, when a restart wiped the extension's memory or the chat came back
+// with a new process, an orange group with the chat's name. Tabs without a
+// session share one "Claude" group per window.
 async function findGroup(windowId, session) {
-  const k = `group:${windowId}:${session ? session.id : '-'}`;
+  if (!session) {
+    const k = `group:${windowId}:-`;
+    const id = await get(k, null);
+    if (id !== null) {
+      const g = await groupInfo(id);
+      if (g && g.windowId === windowId) return { id, k, windowId };
+    }
+    const shared = await chrome.tabGroups.query({ windowId, title: TITLE, color: COLOR });
+    return { id: shared.length ? shared[0].id : null, k, windowId };
+  }
+  const k = `group:${session.id}`;
   const id = await get(k, null);
   if (id !== null) {
     const g = await groupInfo(id);
-    if (g && g.windowId === windowId) return { id, k };
+    if (g) return { id, k, windowId: g.windowId };
   }
-  if (!session) {
-    const shared = await chrome.tabGroups.query({ windowId, title: TITLE, color: COLOR });
-    if (shared.length) return { id: shared[0].id, k };
+  const title = groupTitle(session);
+  if (title !== TITLE) {
+    const same = await chrome.tabGroups.query({ title, color: COLOR });
+    if (same.length) {
+      const g = same.find((x) => x.windowId === windowId) || same[0];
+      await put(k, g.id);
+      await rememberGroup(g.id);
+      return { id: g.id, k, windowId: g.windowId };
+    }
   }
-  return { id: null, k };
+  return { id: null, k, windowId };
 }
 
-// Put the tab in its session's group, creating the group if needed. A tab the
-// user put in a group of their own, or took out of ours, is left where it is.
+// Put the tab in its chat's group, creating the group if needed; a tab that
+// opened in another window joins the group's window, so a chat keeps one
+// group. A tab the user put in a group of their own, or took out of ours, is
+// left where it is.
 async function groupTab(tab, rec, session) {
   if (tab.pinned) return;
   if (tab.groupId !== -1 && !(await isOurGroup(tab.groupId))) return;
   if (tab.groupId === -1 && rec.grouped) return;
-  const { id, k } = await findGroup(tab.windowId, session);
-  let groupId = id;
+  const found = await findGroup(tab.windowId, session);
+  let groupId = found.id;
   if (groupId === null) {
     groupId = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } });
-    await put(k, groupId);
+    await put(found.k, groupId);
     await rememberGroup(groupId);
   } else if (tab.groupId !== groupId) {
+    if (found.windowId !== tab.windowId) await chrome.tabs.move(tab.id, { windowId: found.windowId, index: -1 });
     await chrome.tabs.group({ groupId, tabIds: [tab.id] });
   }
   const g = await groupInfo(groupId);

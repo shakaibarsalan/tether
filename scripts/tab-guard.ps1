@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Adds hooks/tab-guard.mjs to ~/.claude/settings.json as a PreToolUse hook on
-  every chrome-devtools tool and a PostToolUse hook on new_page. Claude can
+  every chrome-devtools tool, and as a PostToolUse hook on all of them too. Claude can
   look at any tab, but before it navigates, clicks or types it has to open its
   own tab (new_page) or deliberately pick one (select_page). Picking or closing
   a tab it didn't open is refused once with the reason; Claude repeats the call
@@ -64,7 +64,7 @@ if (-not $settings.PSObject.Properties['hooks']) {
 $hook = [pscustomobject][ordered]@{ type = 'command'; command = $Node; args = @($guard); timeout = 10 }
 $wanted = @{
     PreToolUse  = [pscustomobject]@{ matcher = "mcp__$($Server)__.*"; hooks = @($hook) }
-    PostToolUse = [pscustomobject]@{ matcher = "mcp__$($Server)__new_page"; hooks = @($hook) }
+    PostToolUse = [pscustomobject]@{ matcher = "mcp__$($Server)__.*"; hooks = @($hook) }
 }
 foreach ($event in 'PreToolUse', 'PostToolUse') {
     $list = @()

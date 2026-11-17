@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 (2026-11-17)
+
+- **Claude took over a tab you were using, fixed at the root:** when Claude closed its own tab (as it now does when a task is done) or you closed it, chrome-devtools-mcp quietly fell back to the first tab, often yours, and Claude's next step navigated it and the tab marker pulled it into Claude's group. The broker now remembers, per chat, the tabs it opened (and tabs those opened); navigating, clicking, typing into or closing any other tab is refused with a message that tells Claude to open its own, and the tab marker can't mark it. If you asked Claude to use one of your tabs, the tab guard's second `select_page` lends the chat your tabs for 30 minutes (`POST /adopt`).
+- **Tab guard follows the selected tab:** it reads every chrome-devtools answer; when the selected tab is no longer one of Claude's (its tab closed and the fallback picked yours), it stops Claude until it opens or picks a tab. Its PostToolUse hook now runs on every chrome-devtools tool (re-run `tab-guard.ps1` / `tab-guard.sh`).
+- **A chat stays in its Chrome profile:** a chat's new tabs open in the profile (browser context) of its first tab, instead of wherever Chrome's default is. If that profile's windows were closed, the tab opens the default way.
+- **One group per chat:** a tab a chat opens in another window joins its group's window, and after a Chrome restart or when the chat comes back as a new process, its group is found again by name instead of a second one being made. Extension 1.1.0.
+- **The cursor gets there before the click:** while Claude works in a tab, the cursor follows Claude's mouse live (Claude's DevTools input has no input device behind it; yours does, so your mouse is left alone), and the broker holds each click 220 ms after the mouse moved, so you see where it lands before it lands.
+- **Tests:** tab guard 9; broker end-to-end 21 (kept out of a tab it didn't open, popups count as its own, the click waits, the profile sticks); extension end-to-end 24.
+
 ## 0.3.1 (2026-11-14)
 
 - **Old marker on top of the extension, fixed:** the tab-marker hook waited 300 ms for the extension's answer. On a page still busy after loading (LinkedIn, Facebook, any big web app), Chrome can run that timer before the answer even though the answer was sent first, so the hook drew its own frame, badge and 🤖 title on top of the extension's look, and they stayed until the page changed. Now the order of window messages decides: two more messages go out behind the ping, and the extension's answer always arrives before the second one. Without the extension the hook decides in a few milliseconds instead of 300.

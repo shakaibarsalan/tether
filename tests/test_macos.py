@@ -97,7 +97,7 @@ class ClaudeSettingsTest(unittest.TestCase):
         self.assertEqual(pre[0]["matcher"], "mcp__chrome-devtools__.*")
         self.assertEqual(pre[0]["hooks"][0]["command"], "/opt/homebrew/bin/node")
         self.assertTrue(pre[0]["hooks"][0]["args"][0].endswith("tab-guard.mjs"))
-        self.assertEqual(s["hooks"]["PostToolUse"][0]["matcher"], "mcp__chrome-devtools__new_page")
+        self.assertEqual(s["hooks"]["PostToolUse"][0]["matcher"], "mcp__chrome-devtools__.*")
 
     def test_guard_blocks_on_failure_before_and_confirms_after(self):
         self.tool("guard", "--python", "/usr/bin/python3")

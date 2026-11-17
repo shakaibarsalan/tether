@@ -88,7 +88,7 @@ export function tabGuard({ claudeDir, server = 'chrome-devtools', node = process
   const mine = (e) => anyHook(e, (h) => /tab-guard\.mjs/.test(hookText(h)));
   return update(path.join(claudeDir, 'settings.json'), 'tab-guard', {
     PreToolUse: { matcher: `mcp__${server}__.*`, hooks: [hook] },
-    PostToolUse: { matcher: `mcp__${server}__new_page`, hooks: [hook] },
+    PostToolUse: { matcher: `mcp__${server}__.*`, hooks: [hook] },
   }, mine, undo);
 }
 

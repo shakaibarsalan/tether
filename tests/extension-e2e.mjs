@@ -213,6 +213,23 @@ await signal(k1, { id: 'c222', title: 'KYC hosting on Hetzner' });
 g2 = await groupsUntil((g) => g['KYC hosting on Hetzner'] === 1);
 ok('a new chat title renames its group', g2['KYC hosting on Hetzner'] === 1, JSON.stringify(g2));
 
+// One chat, one group: a tab the chat opens in another window joins its group.
+const known = new Set(await browser.pages());
+await sw.evaluate(async (u) => { await chrome.windows.create({ url: u }); }, `${base}/b`);
+let j3 = null;
+for (let i = 0; i < 40 && !j3; i++) { await sleep(150); j3 = (await browser.pages()).find((p) => !known.has(p) && p.url().endsWith('/b')) || null; }
+await j3.waitForFunction(() => document.readyState === 'complete');
+await signal(j3, jobs);
+g2 = await groupsUntil((g) => g['Daytime job apply run'] === 3);
+ok("a chat's tab in another window joins its one group", g2['Daytime job apply run'] === 3, JSON.stringify(g2));
+
+// Chrome restarted or the chat came back as a new process: same name, same group.
+await sw.evaluate(() => chrome.storage.session.clear());
+const j4 = await browser.newPage(); await j4.goto(`${base}/a`, { waitUntil: 'load' });
+await signal(j4, { id: 'c999', title: 'Daytime job apply run' });
+g2 = await groupsUntil((g) => g['Daytime job apply run'] === 4);
+ok('after a restart the chat finds its group again, by name', g2['Daytime job apply run'] === 4, JSON.stringify(g2));
+
 ok('no page errors', errors.length === 0, errors.join(' | '));
 await browser.close();
 server.close();

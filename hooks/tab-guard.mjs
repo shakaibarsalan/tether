@@ -75,13 +75,31 @@ const session = input.session_id || 'unknown';
 const state = load(session);
 const pageId = input.tool_input && Number.isInteger(input.tool_input.pageId) ? input.tool_input.pageId : null;
 
+// The Tether broker lends this chat the user's tabs for a while, after the user
+// asked for one of them. Matched by Claude Code session id or claude.exe pid.
+async function lend() {
+  try {
+    await fetch(`http://127.0.0.1:${process.env.TETHER_BROKER_PORT || 9333}/adopt`, {
+      method: 'POST', body: JSON.stringify({ session, pid: process.ppid, minutes: 30 }), signal: AbortSignal.timeout(2000),
+    });
+  } catch { /* no broker: nothing to tell */ }
+}
+
 if (input.hook_event_name === 'PostToolUse') {
+  const text = textOf(input.tool_response);
+  const selected = /^(\d+): .*\[selected\]\s*$/m.exec(text);
   if (tool === 'new_page') {
-    const m = /^(\d+): .*\[selected\]\s*$/m.exec(textOf(input.tool_response));
-    if (m && !state.own.includes(Number(m[1]))) state.own.push(Number(m[1]));
+    if (selected && !state.own.includes(Number(selected[1]))) state.own.push(Number(selected[1]));
     state.ready = true;
-    save(session, state);
+  } else if (selected) {
+    // The answer shows which tab is selected now. When Claude's own tab closed,
+    // chrome-devtools-mcp falls back to the first tab, usually the user's: stop there.
+    state.ready = state.own.includes(Number(selected[1]));
+  } else if (/previously selected page was closed|is now selected/i.test(text)) {
+    state.ready = false;
   }
+  if (tool === 'close_page' && pageId !== null) state.own = state.own.filter((id) => id !== pageId);
+  save(session, state);
   process.exit(0);
 }
 
@@ -100,6 +118,7 @@ if (tool === 'select_page' || tool === 'close_page') {
     state.pending = null;
     if (tool === 'select_page') { state.own.push(pageId); state.ready = true; }
     save(session, state);
+    await lend();
     process.exit(0);
   }
   state.pending = { tool, pageId, at: Date.now() };

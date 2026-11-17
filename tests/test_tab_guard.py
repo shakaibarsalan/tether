@@ -29,7 +29,7 @@ class TabGuardTest(unittest.TestCase):
         if tool_response is not None:
             payload["tool_response"] = tool_response
         r = subprocess.run([NODE, GUARD], input=json.dumps(payload), capture_output=True, text=True,
-                           env={**os.environ, "TETHER_TAB_GUARD_DIR": self.dir}, timeout=30)
+                           env={**os.environ, "TETHER_TAB_GUARD_DIR": self.dir, "TETHER_BROKER_PORT": "1"}, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         if not r.stdout.strip():
             return "allow"
@@ -72,6 +72,26 @@ class TabGuardTest(unittest.TestCase):
         self.call("PostToolUse", "new_page", {}, NEW_PAGE_RESULT)
         other = "99999999-aaaa-bbbb-cccc-222222222222"
         self.assertTrue(self.call("PreToolUse", "navigate_page", {"url": "x"}, session=other).startswith("deny"))
+
+    def test_closing_its_own_tab_stops_it_on_the_fallback_tab(self):
+        # chrome-devtools-mcp falls back to the first tab (the user's) when the selected one closes
+        self.call("PreToolUse", "new_page", {"url": "https://example.com"})
+        self.call("PostToolUse", "new_page", {}, NEW_PAGE_RESULT)
+        self.assertEqual(self.call("PreToolUse", "close_page", {"pageId": 7}), "allow")
+        self.call("PostToolUse", "close_page", {"pageId": 7}, [{"type": "text", "text":
+            "Note: the previously selected page was closed. Page 1 is now selected.\n## Pages\n1: Gmail (https://mail.google.com/) [selected]\n2: Docs"}])
+        self.assertTrue(self.call("PreToolUse", "navigate_page", {"url": "https://example.org"}).startswith("deny"))
+        self.assertTrue(self.call("PreToolUse", "click", {"uid": "1_2"}).startswith("deny"))
+
+    def test_any_answer_that_shows_a_users_tab_selected_stops_it(self):
+        self.call("PreToolUse", "new_page", {"url": "https://example.com"})
+        self.call("PostToolUse", "new_page", {}, NEW_PAGE_RESULT)
+        self.call("PostToolUse", "list_pages", {}, [{"type": "text", "text": "## Pages\n1: Gmail [selected]\n7: about:blank"}])
+        self.assertTrue(self.call("PreToolUse", "fill", {"uid": "1_3", "value": "x"}).startswith("deny"))
+        # back on its own tab: fine again
+        self.assertEqual(self.call("PreToolUse", "select_page", {"pageId": 7}), "allow")
+        self.call("PostToolUse", "select_page", {"pageId": 7}, [{"type": "text", "text": "## Pages\n1: Gmail\n7: about:blank [selected]"}])
+        self.assertEqual(self.call("PreToolUse", "fill", {"uid": "1_3", "value": "x"}), "allow")
 
 
 if __name__ == "__main__":

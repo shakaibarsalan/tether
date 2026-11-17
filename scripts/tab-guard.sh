@@ -2,7 +2,7 @@
 # Keep Claude out of the tab you're using: it has to open its own.
 #
 # Adds hooks/tab-guard.mjs to ~/.claude/settings.json as a PreToolUse hook on
-# every chrome-devtools tool and a PostToolUse hook on new_page. Claude can look
+# every chrome-devtools tool and a PostToolUse hook on every chrome-devtools tool. Claude can look
 # at any tab, but before it navigates, clicks or types it has to open its own
 # tab (new_page) or deliberately pick one (select_page). Picking or closing a tab
 # it didn't open is refused once with the reason; Claude repeats the call only

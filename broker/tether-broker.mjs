@@ -19,6 +19,15 @@
 // stay its own, and a client that goes away is detached without touching the
 // others. Browser.close and a few other dangerous commands are refused.
 //
+// Per chat (one Claude session, across reconnects) the broker also keeps:
+//   - the tabs the chat opened (and popups those tabs opened). Navigating,
+//     clicking, typing into or closing any other tab, i.e. yours, is refused,
+//     unless you asked Claude to use it (the tab guard then calls /adopt);
+//   - the Chrome profile its first tab opened in, so its later tabs open there
+//     too instead of wherever Chrome's default is;
+//   - a short pause before each click, so the extension's cursor can get there
+//     first and the click doesn't happen before you see where it goes.
+//
 //   node tether-broker.mjs [--port 9333] [--chrome-user-data <dir>] [--lazy] [--log <file>] [--no-notify]
 //
 // --lazy waits for the first Claude session before connecting to Chrome. By
@@ -50,6 +59,15 @@ const LOG = args.log || path.join(os.homedir(), '.tether', 'broker.log');
 const VERIFY = path.join(here, '..', 'scripts', IS_MAC ? 'connect-watch.mjs' : 'connect-watch.ps1');
 const POWERSHELL = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const MAX_PAYLOAD = 512 * 1024 * 1024;
+// What changes a tab: refused in tabs the chat didn't open.
+const GUARDED = new Set([
+  'Page.navigate', 'Page.reload', 'Page.navigateToHistoryEntry', 'Page.close',
+  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.dispatchTouchEvent',
+  'Input.dispatchDragEvent', 'Input.imeSetComposition', 'DOM.setFileInputFiles',
+]);
+const NOT_YOURS = "Tether: this is a tab Claude didn't open, so it's the user's. Open your own tab with new_page and work there. "
+  + 'Only if the user asked you to use this tab: select_page it a second time to confirm.';
+const CLICK_LEAD_MS = 220;   // a click waits this long after the mouse moved, for the cursor
 const BLOCKED = new Set([
   'Browser.close',                  // would close your whole Chrome
   'Browser.crash',
@@ -89,6 +107,17 @@ let nextId = 1;
 const pending = new Map();   // upstream id -> { client, origId, strip, method } or { resolve, reject }
 const owners = new Map();    // DevTools session id -> client
 const clients = new Set();
+const sessionTargets = new Map();   // DevTools session id -> the tab (target id) it's attached to
+
+// Per chat, keyed like the tab-marker session (c<claude.exe pid>), kept across
+// reconnects: the tabs it opened, the profile (browser context) of its first
+// tab, until when the user lent it their tabs, and its Claude Code session id.
+const chats = new Map();
+function chatOf(client) {
+  const k = client.session.id;
+  if (!chats.has(k)) chats.set(k, { targets: new Set(), context: null, adoptUntil: 0, cliId: '' });
+  return chats.get(k);
+}
 
 function activePort() {
   const file = path.join(CHROME_DATA, 'DevToolsActivePort');
@@ -122,6 +151,8 @@ function connectChrome() {
     for (const p of pending.values()) if (p.reject) p.reject(new Error('Chrome connection closed'));
     pending.clear();
     owners.clear();
+    sessionTargets.clear();
+    for (const c of chats.values()) { c.targets.clear(); c.context = null; } // a new Chrome run, new ids
     for (const c of clients) c.ws.close(1011, 'Chrome connection closed');
   });
   up = entry;
@@ -160,7 +191,28 @@ function onChromeMessage(data) {
       if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
       return;
     }
-    if (p.method === 'Target.attachToTarget' && msg.result && msg.result.sessionId) own(msg.result.sessionId, p.client);
+    if (p.method === 'Target.attachToTarget' && msg.result && msg.result.sessionId) {
+      own(msg.result.sessionId, p.client);
+      if (p.params && p.params.targetId) sessionTargets.set(msg.result.sessionId, p.params.targetId);
+    }
+    if (p.method === 'Target.createTarget') {
+      const chat = chatOf(p.client);
+      if (msg.result && msg.result.targetId) {
+        chat.targets.add(msg.result.targetId);
+        if (!chat.context) {
+          callChrome('Target.getTargetInfo', { targetId: msg.result.targetId })
+            .then((r) => { if (!chat.context && r && r.targetInfo) chat.context = r.targetInfo.browserContextId || null; })
+            .catch(() => {});
+        }
+      } else if (msg.error && p.pinned) {
+        // the profile this chat used is gone (its windows were closed): open the tab Chrome's default way
+        chat.context = null;
+        const id = nextId++;
+        pending.set(id, { ...p, pinned: false });
+        up.ws.send(JSON.stringify({ id, method: p.method, params: p.unpinned, sessionId: p.upSession }));
+        return;
+      }
+    }
     const out = { ...msg, id: p.origId };
     if (p.strip) delete out.sessionId;
     send(p.client, out);
@@ -168,8 +220,20 @@ function onChromeMessage(data) {
   }
   const owner = msg.sessionId && owners.get(msg.sessionId);
   if (!owner) return;
-  if (msg.method === 'Target.attachedToTarget' && msg.params && msg.params.sessionId) own(msg.params.sessionId, owner);
-  if (msg.method === 'Target.detachedFromTarget' && msg.params && msg.params.sessionId) disown(msg.params.sessionId);
+  const info = msg.params && msg.params.targetInfo;
+  if (msg.method === 'Target.attachedToTarget' && msg.params && msg.params.sessionId) {
+    own(msg.params.sessionId, owner);
+    if (info) sessionTargets.set(msg.params.sessionId, info.targetId);
+  }
+  if (msg.method === 'Target.detachedFromTarget' && msg.params && msg.params.sessionId) {
+    disown(msg.params.sessionId);
+    sessionTargets.delete(msg.params.sessionId);
+  }
+  // a popup or new tab opened from one of the chat's own tabs is the chat's too
+  if (info && info.openerId && /^Target\.(targetCreated|targetInfoChanged|attachedToTarget)$/.test(msg.method)) {
+    const chat = chatOf(owner);
+    if (chat.targets.has(info.openerId)) chat.targets.add(info.targetId);
+  }
   send(owner, msg.sessionId === owner.browserSession ? { method: msg.method, params: msg.params } : msg);
 }
 
@@ -185,9 +249,19 @@ function refuse(client, msg, code, message) {
   send(client, out);
 }
 
+// Log a kept-out attempt once per chat and tab, not for every keystroke.
+const keptOut = new Map();
+function logKeptOut(client, target, method) {
+  const k = `${client.session.id}|${target}`;
+  if (Date.now() - (keptOut.get(k) || 0) < 60000) return;
+  keptOut.set(k, Date.now());
+  log(`${client.who.label}: kept out of a tab it didn't open (${method})`);
+}
+
 function forward(client, data) {
   let text = data.toString();
-  if (text.includes(SESSION_MARK)) text = text.split(SESSION_MARK).join(sessionToken(client));
+  const marker = text.includes(SESSION_MARK);   // the tab-marker hook
+  if (marker) text = text.split(SESSION_MARK).join(sessionToken(client));
   let msg;
   try { msg = JSON.parse(text); } catch { return; }
   if (typeof msg.id !== 'number' || typeof msg.method !== 'string') return;
@@ -203,13 +277,60 @@ function forward(client, data) {
     sessionId = msg.sessionId;
     strip = false;
   }
+  const chat = chatOf(client);
+  const lent = Date.now() < chat.adoptUntil;
+  // Your tabs: no navigating, clicking, typing or closing, and no Claude look, unless you lent them.
+  if (!lent && !strip) {
+    const target = sessionTargets.get(sessionId);
+    if (target && !chat.targets.has(target) && (GUARDED.has(msg.method) || marker)) {
+      logKeptOut(client, target, msg.method);
+      refuse(client, msg, -32000, NOT_YOURS);
+      return;
+    }
+  }
+  if (!lent && msg.method === 'Target.closeTarget' && msg.params && !chat.targets.has(msg.params.targetId)) {
+    logKeptOut(client, msg.params.targetId, msg.method);
+    refuse(client, msg, -32000, NOT_YOURS);
+    return;
+  }
+  // A new tab opens in the profile of the chat's first tab.
+  let params = msg.params || {};
+  let pinned = false;
+  const unpinned = params;
+  if (msg.method === 'Target.createTarget' && !params.browserContextId && chat.context) {
+    params = { ...params, browserContextId: chat.context };
+    pinned = true;
+  }
   const id = nextId++;
-  pending.set(id, { client, origId: msg.id, strip, method: msg.method });
-  up.ws.send(JSON.stringify({ id, method: msg.method, params: msg.params || {}, sessionId }));
+  pending.set(id, { client, origId: msg.id, strip, method: msg.method, params, pinned, unpinned, upSession: sessionId });
+  const out = JSON.stringify({ id, method: msg.method, params, sessionId });
+  // A click waits a moment after the mouse moved there, so the cursor arrives first.
+  let wait = 0;
+  if (msg.method === 'Input.dispatchMouseEvent') {
+    if (params.type === 'mouseMoved') client.movedAt = Date.now();
+    else if (params.type === 'mousePressed' && Date.now() - (client.movedAt || 0) < 1000) wait = CLICK_LEAD_MS;
+  }
+  // in order: what comes after a held click waits for it
+  client.out = client.out
+    .then(() => (wait ? new Promise((r) => setTimeout(r, wait)) : null))
+    .then(() => { if (up && up.open) up.ws.send(out); });
+}
+
+// The tab guard says the user asked this chat to use one of their tabs: lend it
+// the user's tabs for a while. Matched by Claude Code session id or claude pid.
+function adopt({ session, pid, minutes }) {
+  const until = Date.now() + Math.min(Math.max(Number(minutes) || 30, 1), 60) * 60000;
+  let n = 0;
+  for (const [key, chat] of chats) {
+    if ((session && chat.cliId === session) || (pid && key === `c${pid}`)) { chat.adoptUntil = until; n++; }
+  }
+  if (n) log(`a chat was lent the user's tabs until ${new Date(until).toTimeString().slice(0, 5)} (the user asked for one)`);
+  return n;
 }
 
 async function onClient(ws, who) {
-  const client = { ws, who, browserSession: null, sessions: new Set(), queue: [], closed: false, session: sessionOf(who) };
+  const client = { ws, who, browserSession: null, sessions: new Set(), queue: [], closed: false, session: sessionOf(who),
+    out: Promise.resolve(), movedAt: 0 };
   clients.add(client);
   ws.on('message', (data) => { if (client.browserSession) forward(client, data); else client.queue.push(data); });
   ws.on('error', () => {});
@@ -223,6 +344,7 @@ async function onClient(ws, who) {
     for (const data of client.queue.splice(0)) forward(client, data);
     withName(who).then(() => {
       if (who.info && who.info.Title && !client.session.title) client.session.title = who.info.Title;
+      if (who.info && who.info.SessionId) chatOf(client).cliId = who.info.SessionId;
       log(`${who.label}: let in`);
       if (who.allowed) notify(who); // not for the tests' --insecure-allow-any-client
     });
@@ -433,7 +555,10 @@ function sessionToken(client) {
   const s = client.session;
   if (s.claudePid && Date.now() - s.checkedAt > 30000) {
     s.checkedAt = Date.now();
-    slowWorker.ask(`session ${s.claudePid}`, 30000).then((r) => { if (r && r.Title) s.title = r.Title; }).catch(() => {});
+    slowWorker.ask(`session ${s.claudePid}`, 30000).then((r) => {
+      if (r && r.Title) s.title = r.Title;
+      if (r && r.Id && chats.has(s.id)) chats.get(s.id).cliId = r.Id;
+    }).catch(() => {});
   }
   return Buffer.from(JSON.stringify({ id: s.id, title: s.title }), 'utf8').toString('base64');
 }
@@ -445,6 +570,7 @@ function withName(who) {
   const v = who.info || {};
   if (v.Title || !v.ClaudePid || !String(v.Kind || '').startsWith('claude-')) return Promise.resolve(who);
   return slowWorker.ask(`session ${v.ClaudePid}`, 60000).then((r) => {
+    if (r && r.Id) v.SessionId = r.Id;
     if (r && r.Title) {
       Object.assign(v, { Title: r.Title, Session: r.Title, Folder: r.Folder || v.Folder || '' }); // a reconnect starts with it
       who.label = `Claude session '${r.Title}' (${v.Program}, pid ${v.ProcessId})`;
@@ -462,6 +588,14 @@ const server = http.createServer((req, res) => {
   if (!hostOk(req) || req.headers.origin) { reply(403, { error: 'forbidden' }); return; }
   if (req.url === '/json/version') {
     reply(200, { Browser: 'Tether broker', 'Protocol-Version': '1.3', webSocketDebuggerUrl: `ws://${HOST}:${PORT}${PATHNAME}` });
+  } else if (req.method === 'POST' && req.url === '/adopt') {
+    let body = '';
+    req.on('data', (d) => { body += d; if (body.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let n = 0;
+      try { n = adopt(JSON.parse(body || '{}')); } catch { /* bad request */ }
+      reply(200, { lent: n });
+    });
   } else if (req.url === '/status') {
     reply(200, { chrome: up && up.open ? 'connected' : up ? 'waiting for Allow' : 'not connected', clients: [...clients].map((c) => c.who.label) });
   } else {

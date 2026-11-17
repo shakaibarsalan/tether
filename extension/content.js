@@ -47,8 +47,31 @@
     return { id: s.id, title };
   }
 
+  // Claude's mouse and keys come through DevTools, with no input device behind
+  // them (sourceCapabilities is null); yours always have one. While Claude works
+  // in this tab the cursor follows Claude's mouse live, and the broker holds
+  // each click a moment, so the cursor gets there first. Your mouse is left alone.
+  const fromClaude = (e) => e.isTrusted && e.sourceCapabilities === null;
+  let typedInto = null;
+
+  addEventListener('pointermove', (e) => {
+    if (fromClaude(e) && state === 'working') moveCursor(e.clientX, e.clientY, false, true);
+  }, { capture: true, passive: true });
+
   addEventListener('pointerdown', (e) => {
-    if (e.isTrusted) lastClick = { x: e.clientX, y: e.clientY, t: Date.now() };
+    if (!e.isTrusted) return;
+    const live = fromClaude(e) && state === 'working';
+    lastClick = { x: e.clientX, y: e.clientY, t: Date.now(), live };
+    if (live) moveCursor(e.clientX, e.clientY, true, true);
+  }, { capture: true, passive: true });
+
+  addEventListener('keydown', (e) => {
+    if (!fromClaude(e) || state !== 'working') return;
+    const el = document.activeElement;
+    if (!el || el === typedInto || el === document.body || el === document.documentElement) return;
+    typedInto = el;
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height) moveCursor(r.left + Math.min(24, r.width / 2), r.top + r.height / 2, false, true);
   }, { capture: true, passive: true });
 
   // A page Claude just navigated to: keep the working look going.
@@ -137,10 +160,11 @@
   function showAction() {
     const now = Date.now();
     if (lastClick && now - lastClick.t < CLICK_WINDOW_MS) {
-      moveCursor(lastClick.x, lastClick.y, true);
+      if (!lastClick.live) moveCursor(lastClick.x, lastClick.y, true);   // shown live already otherwise
       lastClick = null;
       return;
     }
+    if (typedInto && typedInto === document.activeElement) return;      // pointed at while typing
     const el = document.activeElement;
     if (el && el !== document.body && el !== document.documentElement &&
         (el.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))) {
@@ -154,7 +178,9 @@
   // The cursor is a small arrow with a "Claude" tag, like a collaborator's
   // cursor. It glides to the spot, rings on a click, and after a moment at rest
   // the tag fades and the arrow shrinks back.
-  function moveCursor(x, y, click) {
+  // live: following Claude's mouse as it moves, so a quick glide and the ring
+  // right on the click; otherwise a replay after the fact, slower.
+  function moveCursor(x, y, click, live) {
     const u = ensureUI();
     clearTimeout(restTimer);
     u.cursor.classList.remove('rest');
@@ -164,9 +190,9 @@
       u.cursor.style.transition = 'none';
       u.cursor.style.transform = `translate(${Math.round(x - 60)}px, ${Math.round(y - 40)}px)`;
       void u.cursor.offsetWidth;
-      u.cursor.style.transition = '';
       cursorShown = true;
     }
+    u.cursor.style.transition = live ? 'transform .19s cubic-bezier(.22, 1, .36, 1), opacity .2s ease-out' : '';
     u.cursor.classList.add('on');
     requestAnimationFrame(place);
     if (click) {
@@ -174,7 +200,7 @@
         u.ring.classList.remove('go');
         void u.ring.offsetWidth;
         u.ring.classList.add('go');
-      }, 420);
+      }, live ? 0 : 420);
     }
     restTimer = setTimeout(() => u.cursor.classList.add('rest'), 1600);
   }

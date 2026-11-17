@@ -83,6 +83,63 @@ step('B after A left');
 ok('B keeps working after A leaves', (await pb.evaluate(() => 2 + 2)) === 4);
 ok("A's tab stays open after A leaves", (await titles(B)).includes('Tab A'));
 
+step("B and a tab it didn't open");
+// Tab A is A's (think: the user's tab). B may read it, but not navigate, click or close it.
+let navErr = '';
+try { await sharedA.goto('about:blank#taken'); } catch (e) { navErr = e.message; }
+ok("a chat can't navigate a tab it didn't open", /didn't open/.test(navErr) && (await sharedA.title()) === 'Tab A', navErr.slice(0, 70));
+let clickErr = '';
+try { await sharedA.mouse.click(5, 5); } catch (e) { clickErr = e.message; }
+ok("a chat can't click in a tab it didn't open", /didn't open/.test(clickErr), clickErr.slice(0, 70));
+let closeErr = '';
+try { await sharedA.close(); } catch (e) { closeErr = e.message; }
+await sleep(300);
+ok("a chat can't close a tab it didn't open", /didn't open/.test(closeErr) && (await titles(B)).includes('Tab A'), closeErr.slice(0, 70));
+await pb.goto('data:text/html,<title>Tab B</title><p>again</p>');
+ok('a chat navigates its own tab', (await pb.evaluate(() => document.body.textContent)) === 'again');
+
+step('a popup from its own tab');
+await pb.setContent('<a id=pop href="about:blank#popup" target="_blank">open</a>');
+const popupTarget = new Promise((r) => B.once('targetcreated', r));
+await pb.click('#pop');
+const popup = await (await popupTarget).page();
+let popupErr = '';
+try { await popup.goto('about:blank#mine-too'); } catch (e) { popupErr = e.message; }
+ok('a tab opened from its own tab is the chat\'s too', popupErr === '', popupErr.slice(0, 70));
+await popup.close();
+
+step('the click waits for the cursor');
+await pb.evaluate(() => {
+  window.__t = {};
+  addEventListener('pointermove', () => { window.__t.move = performance.now(); }, true);
+  addEventListener('pointerdown', () => { window.__t.down = performance.now(); }, true);
+});
+await pb.mouse.move(40, 40);
+await pb.mouse.down();
+await pb.mouse.up();
+const lead = await pb.evaluate(() => window.__t.down - window.__t.move);
+ok('a click waits a moment after the mouse moved there', lead >= 180, `${Math.round(lead)} ms`);
+
+step("a chat's tabs stay in its profile");
+// A raw client is a new chat: its first tab opens in a second profile (browser
+// context); its next tab, asked for without one, must open there too.
+const rawChat = await new Promise((resolve, reject) => {
+  const ws = new WebSocket(ep);
+  let n = 0;
+  const waiting = new Map();
+  ws.on('message', (d) => { const m = JSON.parse(d.toString()); if (waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); } });
+  ws.on('open', () => resolve({ ws, send: (method, params = {}) => new Promise((r) => { const id = ++n; waiting.set(id, r); ws.send(JSON.stringify({ id, method, params })); }) }));
+  ws.on('error', reject);
+});
+const ctx = (await rawChat.send('Target.createBrowserContext')).result.browserContextId;
+await rawChat.send('Target.createTarget', { url: 'about:blank#first', browserContextId: ctx });
+await sleep(500);
+const second = (await rawChat.send('Target.createTarget', { url: 'about:blank#second' })).result.targetId;
+const secondInfo = (await rawChat.send('Target.getTargetInfo', { targetId: second })).result.targetInfo;
+ok("a chat's next tab opens in the profile of its first", secondInfo.browserContextId === ctx, `${secondInfo.browserContextId} vs ${ctx}`);
+await rawChat.send('Target.disposeBrowserContext', { browserContextId: ctx });
+rawChat.ws.close();
+
 step('B tries Browser.close');
 // puppeteer swallows errors from Browser.close, so ask on the raw protocol
 const closeReply = await new Promise((resolve, reject) => {
@@ -95,14 +152,19 @@ await sleep(600);
 step('C connects');
 const C = await puppeteer.connect({ browserWSEndpoint: ep });
 const closeError = (closeReply.error && closeReply.error.message) || '';
-ok('Browser.close is refused and Chrome keeps running', /blocked by Tether/.test(closeError) && (await titles(C)).includes('Tab B'), closeError);
+ok('Browser.close is refused and Chrome keeps running', /blocked by Tether/.test(closeError) && (await titles(C)).includes('Tab A'), closeError);
 
 step('session placeholder');
 // The tab-marker hook carries __TETHER_SESSION__; the broker swaps in this client's session.
-const tokenRaw = await (await C.pages())[0].evaluate(() => '__TETHER_SESSION__');
+const pc = await C.newPage();
+const tokenRaw = await pc.evaluate(() => '__TETHER_SESSION__');
 let token = {};
 try { token = JSON.parse(Buffer.from(tokenRaw, 'base64').toString('utf8')); } catch { /* left as is */ }
 ok("the broker fills in the client's session for the tab marker", /^x\d+$/.test(token.id || ''), JSON.stringify(token));
+// ...but not in a tab the chat didn't open: no Claude look, no Claude group on the user's tab
+let markErr = '';
+try { await (await C.pages()).find((p) => p !== pc).evaluate(() => '__TETHER_SESSION__'); } catch (e) { markErr = e.message; }
+ok("the tab marker is refused in a tab the chat didn't open", /didn't open/.test(markErr), markErr.slice(0, 70));
 
 step('raw session check');
 // raw protocol: a session id the client was never given is refused
