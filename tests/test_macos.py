@@ -548,8 +548,13 @@ class BrokerOnMacTest(LiveBase):
     def test_a_plain_program_gets_403(self):
         port = self.start_broker()
         self.assertIn("403", self.handshake(port))
-        with open(self.log) as handle:
-            log = handle.read()
+        # the 403 goes out at once; the log line follows once the chat's name is known
+        for _ in range(100):
+            with open(self.log) as handle:
+                log = handle.read()
+            if "refused" in log:
+                break
+            time.sleep(0.1)
         self.assertIn("refused", log)
         self.assertIn(f"pid {os.getpid()}", log)
 
