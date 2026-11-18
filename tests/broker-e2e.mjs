@@ -120,6 +120,27 @@ await pb.mouse.up();
 const lead = await pb.evaluate(() => window.__t.down - window.__t.move);
 ok('a click waits a moment after the mouse moved there', lead >= 180, `${Math.round(lead)} ms`);
 
+step("the broker tells the page where Claude's mouse is");
+// The extension's cursor follows only this, never the user's own mouse.
+await pb.evaluate(() => {
+  window.__said = [];
+  addEventListener('message', (e) => { if (e.data && /^claude-(pointer|typing)$/.test(e.data.tether)) window.__said.push(e.data); });
+  const f = document.createElement('input');
+  f.id = 'f';
+  document.body.append(f);
+});
+await pb.mouse.move(70, 60);
+await pb.mouse.down();
+await pb.mouse.up();
+await pb.focus('#f');
+await pb.keyboard.type('abc');
+await sleep(400);
+const said = await pb.evaluate(() => window.__said);
+const pointer = said.filter((s) => s.tether === 'claude-pointer');
+ok("the broker posts Claude's mouse position into the page", pointer.length === 2 && pointer[0].x === 70 && pointer[0].y === 60
+  && pointer[0].press === false && pointer[1].press === true, JSON.stringify(pointer));
+ok('...and that Claude is typing, once per burst of keys', said.filter((s) => s.tether === 'claude-typing').length === 1, JSON.stringify(said).slice(0, 120));
+
 step("a chat's tabs stay in its profile");
 // A raw client is a new chat: its first tab opens in a second profile (browser
 // context); its next tab, asked for without one, must open there too.

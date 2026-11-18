@@ -212,6 +212,7 @@ Per chat (one Claude session, across reconnects) the broker also keeps:
 - **its own tabs.** The tabs it opened, and tabs those opened. Navigating, clicking, typing into or closing any other tab, i.e. yours, is refused, and the tab marker can't mark it. When you ask Claude to use one of your tabs, the tab guard's confirming second `select_page` lends the chat your tabs for 30 minutes.
 - **its profile.** New tabs open in the Chrome profile of the chat's first tab, not wherever Chrome's default is.
 - **a beat before each click.** A click waits 220 ms after the mouse moved, so the extension's cursor gets there first.
+- **where Claude's mouse is.** Just before each of Claude's mouse moves and clicks, the broker posts its position into the page (and, once per burst of keys, that Claude is typing). The extension's cursor follows only that, so your own mouse never drags it along.
 
 Inside the one connection each session gets its own browser session (`Target.attachToBrowserTarget`), so its commands and events stay its own and a session that closes never disturbs another. `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused. The broker listens on 127.0.0.1 only and refuses requests with an `Origin` header or a foreign `Host`. Signature checks on the few-hundred-MB `claude.exe` take seconds, so the broker keeps each answer in memory for as long as the file's size and time stay the same.
 

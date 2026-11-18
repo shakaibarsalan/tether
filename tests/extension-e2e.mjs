@@ -83,6 +83,39 @@ const frames = new Set();
 for (let i = 0; i < 40; i++) { frames.add(await tab.evaluate(() => document.querySelector("link[data-tether]")?.href)); await sleep(60); }
 ok("favicon animates", frames.size >= 5, `${frames.size} frames`);
 
+// Your own mouse must never move Claude's cursor. Mouse input sent straight to
+// Chrome here (no broker) is, for the extension, input nobody announced: like
+// yours. Claude's own mouse is announced by the broker ({ tether: 'claude-pointer' }).
+const cdp = await tab.createCDPSession();
+const cursorAt = async () => {   // the cursor lives in a closed shadow root: read it through DevTools
+  const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
+  let found = null;
+  const walk = (n) => {
+    if (found) return;
+    const a = n.attributes || [];
+    const cls = a.includes('class') ? a[a.indexOf('class') + 1] : '';
+    if (n.nodeName === 'DIV' && /(^|\s)cursor(\s|$)/.test(cls)) { found = { style: a.includes('style') ? a[a.indexOf('style') + 1] : '', on: /(^|\s)on(\s|$)/.test(cls) }; return; }
+    for (const c of [...(n.children || []), ...(n.shadowRoots || [])]) walk(c);
+  };
+  walk(root);
+  if (!found) return null;
+  const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(found.style);
+  return { on: found.on, x: m ? Number(m[1]) : null, y: m ? Number(m[2]) : null };
+};
+const near = (c, x, y) => Boolean(c && c.on && Math.abs(c.x - x) < 3 && Math.abs(c.y - y) < 3);
+await tab.mouse.move(600, 420, { steps: 6 });
+await sleep(500);
+const c1 = await cursorAt();
+ok("your mouse doesn't move Claude's cursor", !near(c1, 600, 420), JSON.stringify(c1));
+await tab.evaluate(() => postMessage({ tether: 'claude-pointer', x: 200, y: 150, press: false }, '*'));
+await sleep(500);
+const c2 = await cursorAt();
+ok("Claude's cursor goes where the broker says Claude's mouse is", near(c2, 200, 150), JSON.stringify(c2));
+await tab.mouse.move(700, 500, { steps: 6 });
+await sleep(500);
+const c3 = await cursorAt();
+ok('...and stays there while your mouse moves', near(c3, 200, 150), JSON.stringify(c3));
+
 await tab.click('#go');
 ok('hook after click', (await hook()) === 'tether extension');
 await sleep(520);

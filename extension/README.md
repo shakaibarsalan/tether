@@ -37,6 +37,11 @@ Claude Code ──(chrome-devtools-mcp, 127.0.0.1)──▶ your tab
             before the second one, there's no extension and the
             hook draws its own frame and badge instead)
                          │
+    with the Tether broker in between: just before each of
+    Claude's mouse moves and clicks it posts
+           { tether: 'claude-pointer', x, y, press }
+    (and { tether: 'claude-typing' } once per burst of keys)
+                         │
                          ▼
        content.js (in the page)      ──▶  background.js (service worker)
        • answers "ack"                    • puts the tab in the orange
@@ -52,7 +57,9 @@ The files, in the order Chrome reads them:
 - **`background.js`**: the *service worker*. Chrome starts it when a content script sends a message and stops it when it's idle. It handles the one thing a page can't do, putting a tab in a tab group. It keeps a small per-tab record in `chrome.storage.session`, which is cleared when Chrome closes.
 - **`icons/`**: the Tether logo at 16, 32, 48 and 128 px.
 
-The hook waits 0.3 s for the extension's "ack". If none comes (the extension isn't installed, or the page is one Chrome doesn't let extensions into), it falls back to the old in-page marker: 🤖 in the title and an orange frame.
+If no "ack" comes back (the extension isn't installed, or the page is one Chrome doesn't let extensions into), the hook falls back to the old in-page marker: 🤖 in the title and an orange frame.
+
+The cursor follows only the broker's `claude-pointer` messages. From inside the page, a real mouse move can look exactly like one sent through DevTools, so the extension never guesses from the page's own mouse events. Without the broker, the click just before Claude's signal is taken as Claude's and shown after the fact.
 
 ### Permissions
 
@@ -68,7 +75,7 @@ The hook waits 0.3 s for the extension's "ack". If none comes (the extension isn
 
 - Chrome doesn't let extensions into `chrome://` pages, the Chrome Web Store or other extensions' pages. There, the hook's in-page marker can't run either, so nothing is shown.
 - "Done" means 20 seconds without a Claude action in that tab. If Claude pauses longer to think, you'll see ✓ and then the hourglass again.
-- A web page can post the same `claude-active` message itself and make its own tab look like Claude is using it, and it can tell from the "ack" that the extension is installed. Neither gives it any control, but don't treat the glow as proof.
+- A web page can post the same `claude-active` or `claude-pointer` messages itself and make its own tab look like Claude is using it (or move the cursor), and it can tell from the "ack" that the extension is installed. None of that gives it any control, but don't treat the glow as proof. A page also sees where Claude's mouse is going a moment early, which it sees anyway when the mouse gets there.
 - The overlay is drawn in the top frame. Clicks inside iframes don't move the cursor.
 
 ## Test

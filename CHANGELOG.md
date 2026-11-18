@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3 (2026-11-18)
+
+- **Claude's cursor followed your mouse, fixed:** 0.3.2 took any mouse event without an input device behind it as Claude's, but in a real Chrome your own mouse moves can look the same, so moving your mouse over Claude's tab dragged Claude's cursor along. Now the broker, which forwards every mouse and key command Claude sends, posts `{ tether: 'claude-pointer', x, y, press }` (and `claude-typing`, once per burst of keys) into the page just before the input, and the extension's cursor follows only that. Your mouse and keys never move it, and your clicks are never taken as Claude's when the broker is in between. Without the broker the extension falls back to the click just before Claude's signal, as before 0.3.2. Extension 1.1.1; load it with `broker-setup.ps1 -Restart` / `broker-setup.sh --restart` and a reload of the extension in `chrome://extensions`.
+- **Tests:** broker end-to-end 23 (the broker announces Claude's mouse and typing); extension end-to-end 27 (unannounced mouse input, like yours, leaves the cursor alone; it goes where the broker says). The old extension fails all three new cursor checks.
+
 ## 0.3.2 (2026-11-17)
 
 - **Claude took over a tab you were using, fixed at the root:** when Claude closed its own tab (as it now does when a task is done) or you closed it, chrome-devtools-mcp quietly fell back to the first tab, often yours, and Claude's next step navigated it and the tab marker pulled it into Claude's group. The broker now remembers, per chat, the tabs it opened (and tabs those opened); navigating, clicking, typing into or closing any other tab is refused with a message that tells Claude to open its own, and the tab marker can't mark it. If you asked Claude to use one of your tabs, the tab guard's second `select_page` lends the chat your tabs for 30 minutes (`POST /adopt`).

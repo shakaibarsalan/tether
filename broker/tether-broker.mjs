@@ -310,10 +310,33 @@ function forward(client, data) {
     if (params.type === 'mouseMoved') client.movedAt = Date.now();
     else if (params.type === 'mousePressed' && Date.now() - (client.movedAt || 0) < 1000) wait = CLICK_LEAD_MS;
   }
+  const said = !strip ? claudeInput(client, msg.method, params) : null;
   // in order: what comes after a held click waits for it
   client.out = client.out
     .then(() => (wait ? new Promise((r) => setTimeout(r, wait)) : null))
-    .then(() => { if (up && up.open) up.ws.send(out); });
+    .then(() => {
+      if (!up || !up.open) return;
+      if (said) callChrome('Runtime.evaluate', { expression: `window.postMessage(${JSON.stringify(said)}, '*')` }, sessionId).catch(() => {});
+      up.ws.send(out);
+    });
+}
+
+// What the extension needs to know about Claude's own mouse and keys, so its
+// cursor follows Claude and never your mouse: posted into the page just before
+// the input itself. (Inside the page a real mouse move can look exactly like
+// one sent through DevTools, so the page can't tell them apart on its own.)
+function claudeInput(client, method, params) {
+  if (method === 'Input.dispatchMouseEvent' && (params.type === 'mouseMoved' || params.type === 'mousePressed')) {
+    const x = Number(params.x), y = Number(params.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { tether: 'claude-pointer', x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, press: params.type === 'mousePressed' };
+  }
+  if (method === 'Input.dispatchKeyEvent' || method === 'Input.insertText') {
+    if (Date.now() - (client.typedAt || 0) < 400) return null;   // once per burst of keys is enough
+    client.typedAt = Date.now();
+    return { tether: 'claude-typing' };
+  }
+  return null;
 }
 
 // The tab guard says the user asked this chat to use one of their tabs: lend it

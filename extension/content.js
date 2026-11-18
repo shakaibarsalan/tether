@@ -47,31 +47,45 @@
     return { id: s.id, title };
   }
 
-  // Claude's mouse and keys come through DevTools, with no input device behind
-  // them (sourceCapabilities is null); yours always have one. While Claude works
-  // in this tab the cursor follows Claude's mouse live, and the broker holds
-  // each click a moment, so the cursor gets there first. Your mouse is left alone.
-  const fromClaude = (e) => e.isTrusted && e.sourceCapabilities === null;
+  // Where Claude's mouse is comes from the Tether broker: it sees every mouse and
+  // key command Claude sends, and posts { tether: 'claude-pointer', x, y, press }
+  // or { tether: 'claude-typing' } into the page just before it. So the cursor
+  // follows Claude's mouse live and never yours. (From the page's own events the
+  // two can't be told apart: a real mouse move can look exactly like one sent
+  // through DevTools, and the cursor ended up chasing the user's mouse.)
   let typedInto = null;
+  let livePressAt = 0;
+  let brokerSeen = false;     // the broker announces Claude's input in this page
 
-  addEventListener('pointermove', (e) => {
-    if (fromClaude(e) && state === 'working') moveCursor(e.clientX, e.clientY, false, true);
-  }, { capture: true, passive: true });
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.tether === 'claude-pointer') {
+      const x = Number(d.x), y = Number(d.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      brokerSeen = true;
+      if (d.press === true) { livePressAt = Date.now(); typedInto = null; }
+      onSignal(false, Date.now());
+      whenReady(() => moveCursor(x, y, d.press === true, true));
+    } else if (d.tether === 'claude-typing') {
+      brokerSeen = true;
+      onSignal(false, Date.now());
+      whenReady(pointAtTyping);
+    }
+  });
 
-  addEventListener('pointerdown', (e) => {
-    if (!e.isTrusted) return;
-    const live = fromClaude(e) && state === 'working';
-    lastClick = { x: e.clientX, y: e.clientY, t: Date.now(), live };
-    if (live) moveCursor(e.clientX, e.clientY, true, true);
-  }, { capture: true, passive: true });
-
-  addEventListener('keydown', (e) => {
-    if (!fromClaude(e) || state !== 'working') return;
+  function pointAtTyping() {
     const el = document.activeElement;
     if (!el || el === typedInto || el === document.body || el === document.documentElement) return;
     typedInto = el;
     const r = el.getBoundingClientRect();
     if (r.width && r.height) moveCursor(r.left + Math.min(24, r.width / 2), r.top + r.height / 2, false, true);
+  }
+
+  // Without the broker there are no announcements: the last click just before
+  // Claude's signal is taken as Claude's and shown after the fact.
+  addEventListener('pointerdown', (e) => {
+    if (e.isTrusted) lastClick = { x: e.clientX, y: e.clientY, t: Date.now() };
   }, { capture: true, passive: true });
 
   // A page Claude just navigated to: keep the working look going.
@@ -98,7 +112,7 @@
     if (fromClaude) send('tether:working', { session: session || null });
     whenReady(() => {
       if (state !== 'working') startWorking();
-      if (fromClaude) showAction();
+      if (fromClaude) showAction(Boolean(session));   // a session means the broker is in between
     });
     clearTimeout(idleTimer);
     idleTimer = setTimeout(checkIdle, Math.max(250, lastSignal + IDLE_MS - Date.now()));
@@ -154,14 +168,17 @@
 
   // ----------------------------------------------------------------- cursor
 
-  // Claude's clicks are real mouse events, so the last click that came just
-  // before the signal is where Claude clicked. When Claude typed instead, point
-  // at the field it typed into.
-  function showAction() {
+  // After each Claude action. With the broker the cursor already followed
+  // Claude's mouse live; your clicks are never taken as Claude's. Without it,
+  // the last click just before the signal is where Claude clicked. When Claude
+  // typed or filled a field, point at it.
+  function showAction(viaBroker) {
     const now = Date.now();
-    if (lastClick && now - lastClick.t < CLICK_WINDOW_MS) {
-      if (!lastClick.live) moveCursor(lastClick.x, lastClick.y, true);   // shown live already otherwise
-      lastClick = null;
+    const click = lastClick;
+    lastClick = null;
+    if (now - livePressAt < CLICK_WINDOW_MS) return;                     // shown live already
+    if (!viaBroker && !brokerSeen && click && now - click.t < CLICK_WINDOW_MS) {
+      moveCursor(click.x, click.y, true);
       return;
     }
     if (typedInto && typedInto === document.activeElement) return;      // pointed at while typing
