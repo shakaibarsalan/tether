@@ -100,7 +100,8 @@ ok('a chat navigates its own tab', (await pb.evaluate(() => document.body.textCo
 
 step('a popup from its own tab');
 await pb.setContent('<a id=pop href="about:blank#popup" target="_blank">open</a>');
-const popupTarget = new Promise((r) => B.once('targetcreated', r));
+// wait for the popup's own page (another target can be created first)
+const popupTarget = B.waitForTarget((t) => t.type() === 'page' && t.url().includes('#popup'), { timeout: 15000 });
 await pb.click('#pop');
 const popup = await (await popupTarget).page();
 let popupErr = '';

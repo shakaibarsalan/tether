@@ -91,6 +91,8 @@ jobs:
           )
           echo "broker answered $code"
           test "$code" = 403
+          # the 403 goes out at once; the log line follows once the chat's name is known
+          for i in $(seq 1 50); do grep -q refused "$HOME/.tether/broker.log" && break; sleep 0.2; done
           grep refused "$HOME/.tether/broker.log"
       - name: ./uninstall.sh
         run: ./uninstall.sh
