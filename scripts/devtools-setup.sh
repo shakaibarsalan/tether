@@ -45,8 +45,14 @@ find_claude() {
            /opt/homebrew/bin/claude /usr/local/bin/claude; do
     [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
   done
-  c="$(ls -t "$HOME/Library/Application Support/Claude/claude-code"/*/*/claude "$HOME/Library/Application Support/Claude/claude-code"/*/claude 2>/dev/null | head -n 1)"
-  [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+  # The desktop app keeps it at claude-code/<version>/<hash>/claude.app/Contents/MacOS/claude
+  # (older layouts: .../<hash>/claude, .../<version>/claude). Extra accounts started
+  # with --user-data-dir=~/ClaudeAccounts/<name> keep their own copy there.
+  local d
+  for d in "$HOME/Library/Application Support/Claude/claude-code" "$HOME"/ClaudeAccounts/*/claude-code; do
+    c="$(ls -t "$d"/*/*/claude.app/Contents/MacOS/claude "$d"/*/*/claude "$d"/*/claude 2>/dev/null | head -n 1)"
+    [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+  done
   return 1
 }
 CLAUDE="$(find_claude)" || die 'Claude Code (the "claude" command) was not found. Install Claude Code first: https://code.claude.com'

@@ -211,6 +211,40 @@ class ConnectWatchLogicTest(unittest.TestCase):
         self.assertEqual(out, {"anthropic": True, "anthropic, with a comma": True, "other team": False, "other company": False,
                                "look-alike": False, "not Apple's chain": False, "apple": False, "ad hoc": False})
 
+    def test_codesign_identifier_is_read(self):
+        out = node_eval(f"console.log(JSON.stringify(w.parseCodesign({json.dumps(self.ANTHROPIC)}).identifier));")
+        self.assertEqual(out, "com.anthropic.claude-code")
+        out = node_eval("console.log(JSON.stringify(w.CLAUDE_APP_ID));")
+        self.assertEqual(out, "com.anthropic.claudefordesktop")
+
+    def test_only_a_custom_finder_icon_is_forgiven(self):
+        """A launcher copy with a pasted icon: Icon\\r in the bundle root and FinderInfo on the bundle, nothing else."""
+        base = tempdir(self)
+
+        def bundle(name, extra=()):
+            app = os.path.join(base, name, "Claude 2.app")
+            os.makedirs(os.path.join(app, "Contents"))
+            for n in extra:
+                open(os.path.join(app, n), "w").close()
+            return app
+
+        def line(path):
+            return f"--validated:{path}/Contents/MacOS/Claude\nfile with invalid attached data: Disallowed xattr com.apple.FinderInfo found on {path}\n"
+
+        icon = bundle("icon", ["Icon\r"])
+        extra = bundle("extra", ["Icon\r", "run.sh"])
+        inner = bundle("inner", ["Icon\r"])
+        cases = {
+            "icon only": [icon, line(icon)],
+            "icon and another file in the root": [extra, line(extra)],
+            "FinderInfo on a file inside": [inner, line(inner + "/Contents/MacOS/Claude")],
+            "another problem": [icon, f"{icon}: a sealed resource is missing or invalid\n"],
+            "not an app": [os.path.join(base, "claude"), line(os.path.join(base, "claude"))],
+        }
+        out = node_eval(f"const c = {json.dumps(cases)}; console.log(JSON.stringify(Object.fromEntries(Object.entries(c).map(([k, v]) => [k, w.customIconOnly(v[0], v[1])]))));")
+        self.assertEqual(out, {"icon only": True, "icon and another file in the root": False, "FinderInfo on a file inside": False,
+                               "another problem": False, "not an app": False})
+
     def test_lsof_output_gives_both_ends_with_pids(self):
         text = "p501\nf23\nn127.0.0.1:52011->127.0.0.1:9333\np777\nf9\nn127.0.0.1:9333->127.0.0.1:52011\np900\nf4\nn[::1]:6000->[::1]:9222\n"
         out = node_eval(f"console.log(JSON.stringify(w.parseLsof({json.dumps(text)})));")
@@ -235,11 +269,14 @@ class ConnectWatchLogicTest(unittest.TestCase):
         cases = {
             "tool from the app": tool,
             "tool from a terminal": {**tool, "AppPath": "/bin/zsh"},
+            "tool from a launcher copy": {**tool, "AppPath": "/Users/me/Applications/.claude-copies/Claude 2.app"},
+            "tool from another app": {**tool, "AppPath": "/Applications/iTerm.app"},
             "script": {**tool, "Kind": "claude-script"},
             "unknown": {**tool, "Kind": "unknown"},
         }
         out = node_eval(f"const c = {json.dumps(cases)}; console.log(JSON.stringify(Object.fromEntries(Object.entries(c).map(([k, v]) => [k, w.clientAllowed(v, false).Allowed]))));")
-        self.assertEqual(out, {"tool from the app": True, "tool from a terminal": False, "script": False, "unknown": False})
+        self.assertEqual(out, {"tool from the app": True, "tool from a terminal": False, "tool from a launcher copy": True,
+                               "tool from another app": False, "script": False, "unknown": False})
         # with signatures on, a path that isn't there is never signed
         out = node_eval(f"console.log(JSON.stringify(w.clientAllowed({json.dumps(tool)}, true)));")
         self.assertFalse(out["Allowed"])
@@ -248,8 +285,10 @@ class ConnectWatchLogicTest(unittest.TestCase):
     def test_desktop_app_bundle_is_found_from_its_helpers(self):
         out = node_eval("console.log(JSON.stringify(['/Applications/Claude.app/Contents/MacOS/Claude', "
                         "'/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper', "
-                        "'/Users/me/Applications/Claude.app/Contents/MacOS/Claude', '/usr/local/bin/claude'].map(w.appBundleOf)));")
-        self.assertEqual(out, ["/Applications/Claude.app", "/Applications/Claude.app", "/Users/me/Applications/Claude.app", ""])
+                        "'/Users/me/Applications/Claude.app/Contents/MacOS/Claude', '/usr/local/bin/claude', "
+                        "'/Users/me/Applications/.claude-copies/Claude 2.app/Contents/Helpers/disclaimer'].map(w.appBundleOf)));")
+        self.assertEqual(out, ["/Applications/Claude.app", "/Applications/Claude.app", "/Users/me/Applications/Claude.app", "",
+                               "/Users/me/Applications/.claude-copies/Claude 2.app"])
 
     def test_session_lookup(self):
         root = os.path.join(tempdir(self), "claude-code-sessions")
@@ -400,12 +439,84 @@ class ShellInstallersTest(unittest.TestCase):
         self.assertIn("does NOT block", json.loads(r.stdout)["systemMessage"])
 
 
+@unittest.skipUnless(MAC and shutil.which("clang"), "macOS with clang only")
+class PortMirrorTest(unittest.TestCase):
+    """mac/port-mirror.c: copies Chrome's DevToolsActivePort where Tether can read it."""
+
+    def setUp(self):
+        self.home = tempdir(self)
+        self.bin = os.path.join(self.home, "tether-port-mirror")
+        subprocess.run(["clang", "-O2", "-Wall", "-o", self.bin, os.path.join(ROOT, "mac", "port-mirror.c")],
+                       check=True, capture_output=True, timeout=120)
+        self.chrome = os.path.join(self.home, "Library", "Application Support", "Google", "Chrome")
+        os.makedirs(self.chrome)
+        self.src = os.path.join(self.chrome, "DevToolsActivePort")
+        self.copy = os.path.join(self.home, ".tether", "chrome", "DevToolsActivePort")
+
+    def once(self):
+        env = {**os.environ, "HOME": self.home}
+        env.pop("TETHER_HOME", None)
+        return subprocess.run([self.bin, "--once"], env=env, capture_output=True, text=True, timeout=30)
+
+    def test_copies_the_file_privately_and_removes_the_copy_when_it_is_gone(self):
+        with open(self.src, "w") as handle:
+            handle.write("9222\n/devtools/browser/abc\n")
+        self.assertEqual(self.once().returncode, 0)
+        with open(self.copy) as handle:
+            self.assertEqual(handle.read(), "9222\n/devtools/browser/abc\n")
+        self.assertEqual(os.stat(self.copy).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(os.path.dirname(self.copy)).st_mode & 0o777, 0o700)
+        os.remove(self.src)
+        self.assertEqual(self.once().returncode, 0)
+        self.assertFalse(os.path.exists(self.copy))
+
+    def test_no_permission_is_reported_and_nothing_is_written(self):
+        with open(self.src, "w") as handle:
+            handle.write("9222\n/devtools/browser/abc\n")
+        os.chmod(self.chrome, 0)
+        self.addCleanup(os.chmod, self.chrome, 0o700)
+        r = self.once()
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Full Disk Access", r.stderr)
+        self.assertFalse(os.path.exists(self.copy))
+
+
+@unittest.skipUnless(NODE, "Node.js needed")
+class PrivateChromeDataTest(unittest.TestCase):
+    def test_debug_port_falls_back_to_the_copy_only_when_chrome_data_is_private(self):
+        base = tempdir(self)
+        chrome = os.path.join(base, "Chrome")
+        os.makedirs(chrome)
+        with open(os.path.join(chrome, "DevToolsActivePort"), "w") as handle:
+            handle.write("1111\n/devtools/browser/x\n")
+        mirror = os.path.join(base, "tether", "chrome")
+        os.makedirs(mirror)
+        with open(os.path.join(mirror, "DevToolsActivePort"), "w") as handle:
+            handle.write("2222\n/devtools/browser/y\n")
+        old = os.environ.get("TETHER_HOME")
+        os.environ["TETHER_HOME"] = os.path.join(base, "tether")
+        self.addCleanup(lambda: os.environ.__setitem__("TETHER_HOME", old) if old is not None else os.environ.pop("TETHER_HOME", None))
+        readable = node_eval(f"console.log(JSON.stringify(w.debugPort({json.dumps(chrome)})));")
+        os.chmod(chrome, 0)
+        self.addCleanup(os.chmod, chrome, 0o700)
+        private = node_eval(f"console.log(JSON.stringify(w.debugPort({json.dumps(chrome)})));")
+        missing = node_eval(f"console.log(JSON.stringify(w.debugPort({json.dumps(os.path.join(base, 'none'))})));")
+        self.assertEqual([readable, private, missing], [1111, 2222, 0])
+
+
 def clone(src, dst):
     """A copy of a program under another name (APFS clone when it can, so it takes no space)."""
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    if subprocess.run(["/bin/cp", "-c", src, dst], capture_output=True).returncode != 0:
-        shutil.copy2(src, dst)
+    real = os.path.realpath(src)
+    if subprocess.run(["/bin/cp", "-c", real, dst], capture_output=True).returncode != 0:
+        shutil.copy2(real, dst)
     os.chmod(dst, 0o755)
+    # Homebrew's node loads @rpath/libnode.*.dylib from next to itself or ../lib: link those in.
+    lib = os.path.join(os.path.dirname(os.path.dirname(real)), "lib")
+    if os.path.isdir(lib):
+        for name in os.listdir(lib):
+            if name.startswith("libnode.") and name.endswith(".dylib") and not os.path.exists(os.path.join(os.path.dirname(dst), name)):
+                os.symlink(os.path.join(lib, name), os.path.join(os.path.dirname(dst), name))
 
 
 @unittest.skipUnless(MAC and NODE, "macOS only")

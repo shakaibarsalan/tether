@@ -42,6 +42,11 @@ if [ "$skip_devtools" = 0 ]; then
   if [ "$broker" = 1 ]; then
     say ''
     /bin/bash scripts/broker-setup.sh || warn 'The broker did not start; Claude Code still connects straight to Chrome.'
+    if chrome_private; then
+      say ''
+      say "Chrome keeps its data folder private, so the broker can't read Chrome's port file by itself ..."
+      /bin/bash scripts/port-mirror-setup.sh || warn 'The port mirror did not start; run scripts/port-mirror-setup.sh again.'
+    fi
   fi
 fi
 

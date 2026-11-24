@@ -12,6 +12,7 @@ if [ -f "$(agent_plist broker)" ]; then
   rm -f "$(agent_plist broker)"
   say 'Broker removed.'
 fi
+if [ -f "$(agent_plist port-mirror)" ]; then /bin/bash scripts/port-mirror-setup.sh --undo; fi
 /bin/bash scripts/devtools-setup.sh --undo
 /bin/bash scripts/connect-watch-setup.sh --undo
 say ''

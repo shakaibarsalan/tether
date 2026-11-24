@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Found on a real Mac with the Claude desktop app (CI has none):
+
+- **Chrome's data folder is private on newer Chrome for macOS:** every program except Chrome gets "Operation not permitted", even for `DevToolsActivePort`, so the broker never found Chrome. `scripts/port-mirror-setup.sh` builds a tiny program (`mac/port-mirror.c`) that copies only that file to `~/.tether/chrome/` every 2 seconds, runs it as a LaunchAgent, and opens Full Disk Access so you allow that one program, not node. The broker and the connect watch read the copy when Chrome's own file is private. `install.sh --broker` sets it up when it's needed; `uninstall.sh` removes it.
+- **Launcher copies for more accounts:** a copy of the app such as `Claude 2.app` (started with `--user-data-dir`) was refused for its name, and a pasted Finder icon made `codesign --strict` fail. The app is now recognised by its signature: Anthropic's Developer ID and the identifier `com.anthropic.claudefordesktop`, under any bundle name starting with "Claude". A custom icon (`Icon\r` in the bundle root, FinderInfo on the bundle) is the only thing let through; anything else outside the seal, or a change inside it, is still refused.
+- **`claude` not found on a Mac with only the desktop app:** the app keeps it at `claude-code/<version>/<hash>/claude.app/Contents/MacOS/claude`; `devtools-setup.sh` looks there, and in `~/ClaudeAccounts/*/claude-code` for extra accounts.
+- **Tests:** the custom-icon rule, the bundle id, launcher copies in the broker rule, the port mirror (copies privately, removes the copy, reports a missing permission) and the fallback to the copy. The live tests now run with Homebrew's node too (its `libnode` is linked next to the stand-in programs).
+
 ## 0.3.3 (2026-11-18)
 
 - **Claude's cursor followed your mouse, fixed:** 0.3.2 took any mouse event without an input device behind it as Claude's, but in a real Chrome your own mouse moves can look the same, so moving your mouse over Claude's tab dragged Claude's cursor along. Now the broker, which forwards every mouse and key command Claude sends, posts `{ tether: 'claude-pointer', x, y, press }` (and `claude-typing`, once per burst of keys) into the page just before the input, and the extension's cursor follows only that. Your mouse and keys never move it, and your clicks are never taken as Claude's when the broker is in between. Without the broker the extension falls back to the click just before Claude's signal, as before 0.3.2. Extension 1.1.1; load it with `broker-setup.ps1 -Restart` / `broker-setup.sh --restart` and a reload of the extension in `chrome://extensions`.

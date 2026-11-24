@@ -83,6 +83,21 @@ as long as the program's file doesn't change.
 
 ## Good to know
 
+- **Chrome keeps its data folder private** (newer Chrome on macOS): other programs
+  get "Operation not permitted" in `~/Library/Application Support/Google/Chrome`,
+  so they can't take your cookies. The broker needs one small file from there,
+  `DevToolsActivePort` (the debugging port, no secrets). `install.sh --broker` then
+  runs `scripts/port-mirror-setup.sh`: a tiny program, `~/.tether/bin/tether-port-mirror`
+  (source: `mac/port-mirror.c`), copies only that file to `~/.tether/chrome/` every
+  2 seconds. Give **that program** Full Disk Access (System Settings > Privacy &
+  Security > Full Disk Access > +, Cmd+Shift+G, paste its path). Don't give it to
+  node: every node script would get your Chrome data. `--status` shows whether
+  the copy is there. Rebuilding the program (`--rebuild`) makes macOS ask again.
+- **More accounts with copies of the app** (`Claude 2.app`, `Claude 3.app` started
+  with `--user-data-dir`, each with its own icon): the broker accepts them. It
+  goes by the signature (Anthropic's Developer ID, identifier
+  `com.anthropic.claudefordesktop`), not the name. A pasted Finder icon is fine;
+  any other change to the copy makes it fail.
 - **Node from nvm, fnm or Volta:** the LaunchAgents and hooks store the full path
   of `node`. After switching to another Node version, run `scripts/broker-setup.sh`,
   `scripts/connect-watch-setup.sh` and `scripts/tab-guard.sh` again.

@@ -122,11 +122,20 @@ export function ancestry(table, pid) {
   return list;
 }
 
-// The Claude desktop app: its main program or one of its helpers inside Claude.app.
+// The app bundle a program belongs to: the outermost .app in its path, for the
+// app's main program or one of its helpers. That is Claude.app, or a copy of it
+// under another name ("Claude 2.app", a launcher for a second account). Which
+// app it really is, the signature says (signatureOf checks the bundle id).
 export function appBundleOf(file) {
-  const m = /^(.*\/Claude\.app)\/Contents\//.exec(String(file || ''));
+  const m = /^(.*?\/[^/]+\.app)\/Contents\//.exec(String(file || ''));
   return m ? m[1] : '';
 }
+
+// The Claude desktop app's bundle names: Claude.app, or a copy whose name starts
+// with "Claude" ("Claude 2.app", "Claude Account 3.app").
+export const CLAUDE_APP_NAME = /\/Claude[^/]*\.app$/;
+// The Claude desktop app's code-signing identifier (codesign -dvv "Identifier=").
+export const CLAUDE_APP_ID = 'com.anthropic.claudefordesktop';
 
 // A Claude Code process: the CLI the desktop app starts (claude-code/<version>/.../claude),
 // the native CLI (~/.local/share/claude/versions/<version>), or the npm CLI. Not
@@ -308,8 +317,25 @@ export function formatInfo(info) {
 export function parseCodesign(text) {
   const authorities = [...String(text).matchAll(/^Authority=(.+)$/gm)].map((m) => m[1].trim());
   const team = (/^TeamIdentifier=(\S+)\s*$/m.exec(String(text)) || [])[1] || '';
+  const identifier = (/^Identifier=(\S+)\s*$/m.exec(String(text)) || [])[1] || '';
   const leaf = /^Developer ID Application: Anthropic,? PBC \(([A-Z0-9]{10})\)$/.exec(authorities[0] || '');
-  return { authorities, team, anthropic: Boolean(leaf && leaf[1] === team && authorities.includes('Apple Root CA')) };
+  return { authorities, team, identifier, anthropic: Boolean(leaf && leaf[1] === team && authorities.includes('Apple Root CA')) };
+}
+
+// A custom icon pasted onto an app copy in Finder (Get Info) puts an "Icon\r"
+// file in the bundle root and a com.apple.FinderInfo attribute on the bundle.
+// Neither is code or part of the seal, but "codesign --verify --strict" calls
+// them detritus. Only that exact case passes: the bundle root holds nothing but
+// Contents and Icon\r, the first problem codesign finds is FinderInfo on the
+// bundle itself, and the whole seal still verifies (--strict=symlinks checks
+// everything --strict does except attached data).
+export function customIconOnly(file, verboseOutput) {
+  if (!String(file).endsWith('.app')) return false;
+  const want = `file with invalid attached data: Disallowed xattr com.apple.FinderInfo found on ${file}`;
+  if (!String(verboseOutput || '').split('\n').some((l) => l.trim() === want)) return false;
+  let names;
+  try { names = fs.readdirSync(file); } catch { return false; }
+  return names.length > 0 && names.every((n) => n === 'Contents' || n === 'Icon\r') && names.includes('Contents');
 }
 
 const sigCache = new Map();
@@ -320,13 +346,30 @@ export function signatureOf(file) {
   const key = `${file}|${st.size}|${st.mtimeMs}`;
   if (sigCache.has(key)) return sigCache.get(key);
   let answer;
-  const verify = run('/usr/bin/codesign', ['--verify', '--strict', file], 10 * 60 * 1000);
+  let verify = run('/usr/bin/codesign', ['--verify', '--strict', file], 10 * 60 * 1000);
+  let note = '';
+  if (verify.status !== 0 && file.endsWith('.app')) {
+    const loud = run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', file], 10 * 60 * 1000);
+    // codesign prints the "file with invalid attached data" detail on stdout, the summary on stderr
+    if (customIconOnly(file, `${loud.stdout || ''}\n${loud.stderr || ''}`)) {
+      const seal = run('/usr/bin/codesign', ['--verify', '--strict=symlinks', file], 10 * 60 * 1000);
+      if (seal.status === 0) { verify = seal; note = 'custom Finder icon (Icon\\r, FinderInfo) ignored'; }
+    }
+  }
   if (verify.status !== 0) {
     answer = { Signed: false, Reason: `codesign --verify failed: ${String(verify.stderr || '').trim().split('\n').pop()}` };
   } else {
     const d = run('/usr/bin/codesign', ['-dvv', file], 60000);
     const c = parseCodesign(`${d.stderr || ''}\n${d.stdout || ''}`);
-    answer = { Signed: c.anthropic, Team: c.team, Signer: c.authorities[0] || '', Reason: c.anthropic ? '' : `signed by ${c.authorities[0] || 'nobody'}` };
+    let signed = c.anthropic;
+    let reason = c.anthropic ? '' : `signed by ${c.authorities[0] || 'nobody'}`;
+    // An app bundle counts only when it is the Claude desktop app, whatever its folder is called.
+    if (signed && file.endsWith('.app') && c.identifier !== CLAUDE_APP_ID) {
+      signed = false;
+      reason = `an Anthropic app, but not the Claude desktop app (${c.identifier || 'no identifier'})`;
+    }
+    answer = { Signed: signed, Team: c.team, Signer: c.authorities[0] || '', Identifier: c.identifier, Reason: reason };
+    if (note) answer.Note = note;
   }
   sigCache.set(key, answer);
   return answer;
@@ -340,7 +383,7 @@ export const anthropicSigned = (file) => signatureOf(file).Signed === true;
 export function clientAllowed(info, signatures = true) {
   const no = (why) => ({ Allowed: false, Reason: why });
   if (info.Kind !== 'claude-tool') return no(`not Claude's chrome-devtools-mcp (${info.Kind})`);
-  if (!/\/Claude\.app$/.test(info.AppPath)) return no(`not started by the Claude desktop app (${info.AppPath})`);
+  if (!CLAUDE_APP_NAME.test(info.AppPath)) return no(`not started by the Claude desktop app (${info.AppPath})`);
   if (signatures) {
     if (!anthropicSigned(info.ClaudePath)) return no(`Claude Code isn't signed by Anthropic (${info.ClaudePath})`);
     if (!anthropicSigned(info.AppPath)) return no(`the Claude app isn't signed by Anthropic (${info.AppPath})`);
@@ -394,11 +437,18 @@ export function listenersOn(port) {
   return out;
 }
 
+// Newer Chrome on macOS keeps its data folder private to itself (EPERM for everyone
+// else); scripts/port-mirror-setup.sh then keeps a copy of the port file here.
+export const PORT_MIRROR = path.join(TETHER_DIR, 'chrome', 'DevToolsActivePort');
+
 export function debugPort(chromeData = CHROME_DATA_DEFAULT) {
-  try {
-    const port = Number(fs.readFileSync(path.join(chromeData, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]);
-    return Number.isInteger(port) && port > 0 ? port : 0;
-  } catch { return 0; }
+  let text;
+  try { text = fs.readFileSync(path.join(chromeData, 'DevToolsActivePort'), 'utf8'); } catch (e) {
+    if (!['EPERM', 'EACCES'].includes(e.code)) return 0;
+    try { text = fs.readFileSync(PORT_MIRROR, 'utf8'); } catch { return 0; }
+  }
+  const port = Number(text.split(/\r?\n/)[0]);
+  return Number.isInteger(port) && port > 0 ? port : 0;
 }
 
 // ------------------------------------------------------------------ notifications

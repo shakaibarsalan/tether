@@ -33,6 +33,13 @@ find_node() {
 }
 
 # Node.js 20.19 or newer (chrome-devtools-mcp's own requirement).
+# Newer Chrome keeps its data folder private: other programs get "Operation not
+# permitted" even for small files in it (then scripts/port-mirror-setup.sh helps).
+chrome_private() {
+  local f="$HOME/Library/Application Support/Google/Chrome/Local State"
+  [ -e "$f" ] && ! head -c 1 "$f" >/dev/null 2>&1
+}
+
 need_node() {
   NODE="$(find_node)" || die 'Node.js 20.19 or newer is needed: https://nodejs.org (or: brew install node)'
   local v major minor

@@ -119,9 +119,25 @@ function chatOf(client) {
   return chats.get(k);
 }
 
+// Newer Chrome on macOS keeps its data folder private to itself (EPERM for everyone
+// else). scripts/port-mirror-setup.sh then keeps a copy of the port file here.
+const PORT_MIRROR = path.join(process.env.TETHER_HOME || path.join(os.homedir(), '.tether'), 'chrome', 'DevToolsActivePort');
+let mirrorHinted = false;
+function readPortFile() {
+  try { return fs.readFileSync(path.join(CHROME_DATA, 'DevToolsActivePort'), 'utf8'); } catch (e) {
+    if (!IS_MAC || !['EPERM', 'EACCES'].includes(e.code)) throw e;
+    try { return fs.readFileSync(PORT_MIRROR, 'utf8'); } catch (e2) {
+      if (!mirrorHinted && e2.code === 'ENOENT') {
+        mirrorHinted = true;
+        log(`macOS keeps Chrome's data folder private and there is no copy at ${PORT_MIRROR}: run scripts/port-mirror-setup.sh`);
+      }
+      throw e2;
+    }
+  }
+}
+
 function activePort() {
-  const file = path.join(CHROME_DATA, 'DevToolsActivePort');
-  const text = fs.readFileSync(file, 'utf8');
+  const text = readPortFile();
   const [port, wsPath] = text.split(/\r?\n/);
   if (!/^\d+$/.test(port || '') || !(wsPath || '').startsWith('/devtools/browser/')) throw new Error('DevToolsActivePort is incomplete');
   return { port: Number(port), wsPath, stamp: `${port}${wsPath}` };
