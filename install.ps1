@@ -22,6 +22,8 @@
 .PARAMETER Broker
   Also set up the Tether broker (scripts\broker-setup.ps1): Chrome asks "Allow?"
   once per Chrome start, and signed Claude desktop sessions get in without asking.
+  And the tab-marker hook (scripts\tab-marker.ps1), which tells the Tether
+  extension which chat each tab is for (one tab group per chat).
 
 .PARAMETER SkipBlock
   Only set up the local DevTools connection.
@@ -51,6 +53,9 @@ if (-not $SkipDevTools) {
         Write-Host ''
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'broker-setup.ps1')
         if ($LASTEXITCODE -ne 0) { Write-Host 'The broker did not start; Claude Code still connects straight to Chrome.' -ForegroundColor Yellow }
+        Write-Host ''
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'tab-marker.ps1')
+        if ($LASTEXITCODE -ne 0) { Write-Host 'The tab marker was not added (no tab group per chat); run scripts\tab-marker.ps1.' -ForegroundColor Yellow }
     }
 }
 

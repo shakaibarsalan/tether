@@ -71,6 +71,12 @@
       brokerSeen = true;
       onSignal(false, Date.now());
       whenReady(pointAtTyping);
+    } else if (d.tether === 'claude-front') {
+      // Claude's tab is to be shown: the broker doesn't raise Chrome's window
+      // (that would pull you out of the app you're in), so select it in its
+      // window. The answer tells the broker it needn't do it Chrome's way.
+      try { postMessage({ tether: 'front-ack', id: String(d.id || '') }, '*'); } catch (err) { /* ignore */ }
+      send('tether:front', null);
     }
   });
 

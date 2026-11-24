@@ -1,6 +1,6 @@
 #!/bin/bash
 # Undo install.sh on macOS: remove the broker, the DevTools MCP server, the
-# connect watch and the bridge block.
+# tab-marker hook, the connect watch and the bridge block.
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -14,6 +14,7 @@ if [ -f "$(agent_plist broker)" ]; then
 fi
 if [ -f "$(agent_plist port-mirror)" ]; then /bin/bash scripts/port-mirror-setup.sh --undo; fi
 /bin/bash scripts/devtools-setup.sh --undo
+/bin/bash scripts/tab-marker.sh --undo
 /bin/bash scripts/connect-watch-setup.sh --undo
 say ''
 say 'Removing the bridge block (macOS will ask for your password) ...'

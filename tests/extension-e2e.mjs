@@ -49,10 +49,12 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.once('listening', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
+// A debugging port as well, for the part at the end that goes through the broker.
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tether-ext-profile-'));
 const browser = await puppeteer.launch({
-  executablePath: chromePath,
+  executablePath: chromePath, userDataDir,
   headless: true, pipe: true, enableExtensions: [path.join(repo, 'extension')],
-  args: ['--no-first-run', '--no-default-browser-check', '--window-size=1280,800'],
+  args: ['--no-first-run', '--no-default-browser-check', '--window-size=1280,800', '--remote-debugging-pipe', '--remote-debugging-port=0'],
   defaultViewport: { width: 1280, height: 760 },
 });
 const errors = [];
@@ -263,8 +265,50 @@ await signal(j4, { id: 'c999', title: 'Daytime job apply run' });
 g2 = await groupsUntil((g) => g['Daytime job apply run'] === 4);
 ok('after a restart the chat finds its group again, by name', g2['Daytime job apply run'] === 4, JSON.stringify(g2));
 
+// Claude wants a tab shown. The broker doesn't raise Chrome's window (that would
+// pull you out of the app you're in); it asks the extension, which makes the tab
+// the selected one of its window.
+const shown = await browser.newPage(); await shown.goto(`${base}/a`, { waitUntil: 'load' });
+const cover = await browser.newPage(); await cover.goto(`${base}/b`, { waitUntil: 'load' });   // now in front of it
+const selected = () => shown.evaluate(() => document.visibilityState);
+const v1 = await selected();
+await shown.evaluate(() => postMessage({ tether: 'claude-front' }, '*'));
+let v2 = '';
+for (let i = 0; i < 30 && v2 !== 'visible'; i++) { await sleep(100); v2 = await selected(); }
+ok("claude-front selects Claude's tab in its window", v1 === 'hidden' && v2 === 'visible', `${v1} -> ${v2}`);
+
+// Through the broker, as Claude works: a new tab opens in the background (so
+// Chrome's window doesn't come to the front) and, once its page is there, the
+// extension selects it in its window. The broker never has to raise Chrome.
+const wsMod = path.join(repo, 'broker', 'node_modules', 'ws');
+if (fs.existsSync(wsMod) && fs.existsSync(path.join(userDataDir, 'DevToolsActivePort'))) {
+  const { spawn } = await import('node:child_process');
+  const bport = 9800 + Math.floor(Math.random() * 150);
+  const blog = path.join(userDataDir, 'broker-test.log');
+  const broker = spawn(process.execPath, [path.join(repo, 'broker', 'tether-broker.mjs'), '--port', String(bport), '--lazy', '--no-notify',
+    '--insecure-allow-any-client', '--chrome-user-data', userDataDir, '--log', blog], { stdio: 'ignore' });
+  for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${bport}/json/version`)).ok) break; } catch { /* */ } await sleep(100); }
+  const claude = await puppeteer.connect({ browserWSEndpoint: `ws://127.0.0.1:${bport}/devtools/browser/tether`, defaultViewport: null });
+  const mine = await claude.newPage();
+  const atFirst = await mine.evaluate(() => document.visibilityState);
+  await mine.goto(`${base}/a`, { waitUntil: 'load' });
+  let shownNow = '';
+  for (let i = 0; i < 30 && shownNow !== 'visible'; i++) { await sleep(100); shownNow = await mine.evaluate(() => document.visibilityState); }
+  const blogText = fs.existsSync(blog) ? fs.readFileSync(blog, 'utf8') : '';
+  ok("through the broker, Claude's new tab starts in the background", atFirst === 'hidden', atFirst);
+  ok('...and the extension shows it once its page is there', shownNow === 'visible', shownNow);
+  ok("...so the broker never had to raise Chrome's window", !blogText.includes("Chrome's way"), blogText.split('\n').filter((l) => l.includes("Chrome's way")).join(' | '));
+  await mine.click('#go');   // clicks work in it
+  ok('Claude can click in that tab', true);
+  await claude.disconnect();
+  broker.kill();
+} else {
+  results.push('SKIP  through the broker (needs broker/node_modules)');
+}
+
 ok('no page errors', errors.length === 0, errors.join(' | '));
 await browser.close();
+try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch { /* Chrome may still hold files */ }
 server.close();
 console.log(results.join('\n'));
 process.exit(results.some((r) => r.startsWith('FAIL')) ? 1 : 0);

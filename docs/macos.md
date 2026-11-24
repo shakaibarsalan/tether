@@ -27,6 +27,11 @@ Then, once:
    this browser instance**.
 3. Chrome asks **Allow?** once, for the broker. Click Allow. New Claude Code
    sessions then get in without asking.
+4. Load the Tether extension in each Chrome profile Claude works in
+   (`chrome://extensions` > Developer mode > **Load unpacked** > the `extension`
+   folder). With it, each chat gets its own tab group (the installer adds the
+   tab-marker hook that names them), and Chrome stays behind the app you're in
+   while Claude opens and uses its tabs.
 
 Without `--broker`, Chrome asks **Allow?** once per Claude Code session instead.
 

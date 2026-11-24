@@ -78,7 +78,8 @@ jobs:
           scripts/connect-watch-setup.sh --status
           scripts/check.sh
           scripts/check.sh --install-hook && grep 'scripts/check.sh' ~/.claude/settings.json
-          scripts/tab-marker.sh && scripts/tab-guard.sh && grep -c 'tab-guard.mjs' ~/.claude/settings.json
+          grep -c '__claudeTabMarker' ~/.claude/settings.json   # --broker adds the tab marker (a tab group per chat)
+          scripts/tab-guard.sh && grep -c 'tab-guard.mjs' ~/.claude/settings.json
       - name: A program that isn't Claude gets 403 from the installed broker
         run: |
           code=$(python3 - <<'PY'
@@ -109,5 +110,6 @@ jobs:
           gone launchctl print "gui/$(id -u)/io.github.shakaibarsalan.tether.broker"
           gone claude mcp get chrome-devtools
           gone test -d "$HOME/.tether/npm/node_modules/chrome-devtools-mcp"
-          scripts/check.sh --remove-hook && scripts/tab-marker.sh --undo && scripts/tab-guard.sh --undo
+          gone grep '__claudeTabMarker' ~/.claude/settings.json   # uninstall.sh took the tab marker out
+          scripts/check.sh --remove-hook && scripts/tab-guard.sh --undo
           gone grep -E 'tab-guard|check.sh|__claudeTabMarker' ~/.claude/settings.json

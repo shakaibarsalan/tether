@@ -131,6 +131,10 @@ async function handle(msg, tab) {
       rec.done = true;
       await put(tabKey(tab.id), rec);
       return { ok: true };
+    case 'tether:front':
+      // the selected tab of its window; the window itself stays where it is
+      try { await chrome.tabs.update(tab.id, { active: true }); } catch (e) { return { ok: false }; }
+      return { ok: true };
     default:
       return { ok: false };
   }

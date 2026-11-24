@@ -178,5 +178,18 @@ class BrokerOnWindowsTest(unittest.TestCase):
         self.assertNotIn("timed out", text)
 
 
+@unittest.skipUnless(NODE and os.path.isdir(os.path.join(BROKER, "node_modules", "ws")), "needs node and broker/node_modules")
+class BrokerFocusTest(unittest.TestCase):
+    """Claude never pulls Chrome to the front (on a Mac that takes you out of
+    the app you're in). tests/broker-focus.mjs puts a fake Chrome behind the
+    broker and checks what the broker sends it."""
+
+    def test_never_brings_chrome_to_the_front(self):
+        r = subprocess.run([NODE, os.path.join(ROOT, "tests", "broker-focus.mjs")],
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("FAIL", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

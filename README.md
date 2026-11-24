@@ -205,13 +205,14 @@ Clicking **Allow?** for every Claude Code session gets old, and a prompt you cli
 
 Anything else (a script a session ran, a terminal session, any other program, a web page) gets `403`, and the decision goes to the log. The checks run in one long-lived PowerShell worker (about a second each, instead of PowerShell starting up every time, which on a busy or full disk could take long enough to refuse real sessions), and a session that reconnects is let straight back in while its process lives. The broker finds the client's process with `netstat` and the worker only walks its parents; the chat's name is looked up after the decision, by a second worker that also does the signature checks and notifications.
 
-The broker also tells the extension which session each tab belongs to: the tab-marker hook carries a placeholder that the broker fills with that session's id and chat title, so each session gets its own tab group named after the chat.
+The broker also tells the extension which session each tab belongs to: the tab-marker hook carries a placeholder that the broker fills with that session's id and chat title, so each session gets its own tab group named after the chat. `install.ps1 -Broker` (and `./install.sh --broker`) adds the tab-marker hook for that; without it there are no groups.
 
 Per chat (one Claude session, across reconnects) the broker also keeps:
 
 - **its own tabs.** The tabs it opened, and tabs those opened. Navigating, clicking, typing into or closing any other tab, i.e. yours, is refused, and the tab marker can't mark it. When you ask Claude to use one of your tabs, the tab guard's confirming second `select_page` lends the chat your tabs for 30 minutes.
 - **its profile.** New tabs open in the Chrome profile of the chat's first tab, not wherever Chrome's default is.
 - **a beat before each click.** A click waits 220 ms after the mouse moved, so the extension's cursor gets there first.
+- **Chrome where you left it.** Claude's new tabs open in the background, so Chrome's window doesn't come to the front while you work in another app; once a tab's page is there, the extension makes it the shown tab of its window. "Bring to front" does the same, and never for your tabs. Without the extension the tab is shown Chrome's way, which raises Chrome (`broker.log` says when).
 - **where Claude's mouse is.** Just before each of Claude's mouse moves and clicks, the broker posts its position into the page (and, once per burst of keys, that Claude is typing). The extension's cursor follows only that, so your own mouse never drags it along.
 
 Inside the one connection each session gets its own browser session (`Target.attachToBrowserTarget`), so its commands and events stay its own and a session that closes never disturbs another. `Browser.close`, `Browser.crash` and `Target.exposeDevToolsProtocol` are refused. The broker listens on 127.0.0.1 only and refuses requests with an `Origin` header or a foreign `Host`. Signature checks on the few-hundred-MB `claude.exe` take seconds, so the broker keeps each answer in memory for as long as the file's size and time stay the same.
@@ -301,7 +302,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-118 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
+126 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 

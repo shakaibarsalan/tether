@@ -8,6 +8,9 @@
 #                                      logs the program behind each "Allow?".
 #   3. scripts/broker-setup.sh         with --broker: Chrome asks "Allow?" once
 #                                      per Chrome start, not once per session.
+#      scripts/tab-marker.sh           and the tab-marker hook, which tells the
+#                                      Tether extension which chat each tab is
+#                                      for (one tab group per chat).
 #   4. scripts/bridge-block.sh         blocks Anthropic's hosted browser bridge in
 #                                      /etc/hosts. Asks for your password (sudo).
 #
@@ -26,7 +29,7 @@ while [ $# -gt 0 ]; do
     --skip-watch) skip_watch=1 ;;
     --broker) broker=1 ;;
     --skip-block) skip_block=1 ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
   shift
@@ -42,6 +45,8 @@ if [ "$skip_devtools" = 0 ]; then
   if [ "$broker" = 1 ]; then
     say ''
     /bin/bash scripts/broker-setup.sh || warn 'The broker did not start; Claude Code still connects straight to Chrome.'
+    say ''
+    /bin/bash scripts/tab-marker.sh || warn 'The tab marker was not added (no tab group per chat); run scripts/tab-marker.sh.'
     if chrome_private; then
       say ''
       say "Chrome keeps its data folder private, so the broker can't read Chrome's port file by itself ..."

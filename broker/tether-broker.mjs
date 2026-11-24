@@ -168,6 +168,8 @@ function connectChrome() {
     pending.clear();
     owners.clear();
     sessionTargets.clear();
+    unshown.clear();
+    pageUrls.clear();
     for (const c of chats.values()) { c.targets.clear(); c.context = null; } // a new Chrome run, new ids
     for (const c of clients) c.ws.close(1011, 'Chrome connection closed');
   });
@@ -215,6 +217,7 @@ function onChromeMessage(data) {
       const chat = chatOf(p.client);
       if (msg.result && msg.result.targetId) {
         chat.targets.add(msg.result.targetId);
+        if (p.unfocused) unshown.add(msg.result.targetId);
         if (!chat.context) {
           callChrome('Target.getTargetInfo', { targetId: msg.result.targetId })
             .then((r) => { if (!chat.context && r && r.targetInfo) chat.context = r.targetInfo.browserContextId || null; })
@@ -226,6 +229,12 @@ function onChromeMessage(data) {
         const id = nextId++;
         pending.set(id, { ...p, pinned: false });
         up.ws.send(JSON.stringify({ id, method: p.method, params: p.unpinned, sessionId: p.upSession }));
+        return;
+      } else if (msg.error && p.unfocused) {
+        // a Chrome that doesn't know "focus" yet: open the tab the way it was asked
+        const id = nextId++;
+        pending.set(id, { ...p, unfocused: false });
+        up.ws.send(JSON.stringify({ id, method: p.method, params: p.asked, sessionId: p.upSession }));
         return;
       }
     }
@@ -244,7 +253,13 @@ function onChromeMessage(data) {
   if (msg.method === 'Target.detachedFromTarget' && msg.params && msg.params.sessionId) {
     disown(msg.params.sessionId);
     sessionTargets.delete(msg.params.sessionId);
+    pageUrls.delete(msg.params.sessionId);
   }
+  // a background tab Claude opened: show it in its window once its page is there
+  if (msg.method === 'Page.frameNavigated' && msg.params && msg.params.frame && !msg.params.frame.parentId) {
+    pageUrls.set(msg.sessionId, String(msg.params.frame.url || ''));
+  }
+  if (msg.method === 'Page.domContentEventFired') showWhenLoaded(msg.sessionId);
   // a popup or new tab opened from one of the chat's own tabs is the chat's too
   if (info && info.openerId && /^Target\.(targetCreated|targetInfoChanged|attachedToTarget)$/.test(msg.method)) {
     const chat = chatOf(owner);
@@ -309,16 +324,40 @@ function forward(client, data) {
     refuse(client, msg, -32000, NOT_YOURS);
     return;
   }
-  // A new tab opens in the profile of the chat's first tab.
-  let params = msg.params || {};
+  // Claude doesn't pull Chrome to the front: "bring to front" would raise
+  // Chrome's window, and on a Mac take you out of the app you're working in.
+  // The chat's own tab is selected inside its window (showTab); yours never.
+  if (msg.method === 'Page.bringToFront' || msg.method === 'Target.activateTarget') {
+    const target = msg.method === 'Page.bringToFront' ? sessionTargets.get(sessionId) : msg.params && msg.params.targetId;
+    const page = msg.method === 'Page.bringToFront' ? (strip ? null : sessionId) : sessionOfTarget(client, target);
+    const reply = () => send(client, strip ? { id: msg.id, result: {} } : { id: msg.id, result: {}, sessionId: msg.sessionId });
+    if (target && !lent && !chat.targets.has(target)) { reply(); return; }
+    if (target && page) {
+      unshown.delete(target);
+      showTab(page, target, pageUrls.get(page));
+      reply();
+      return;
+    }
+    // a tab the broker knows nothing about: Chrome's own way
+  }
+  // A new tab opens in the profile of the chat's first tab, and in the
+  // background (focus: false), so Chrome's window doesn't come to the front.
+  // Once its first page is there, showTab selects it in its window.
+  const asked = msg.params || {};
+  let params = asked;
   let pinned = false;
+  let unfocused = false;
+  if (msg.method === 'Target.createTarget' && params.background !== true && params.focus === undefined) {
+    params = { ...params, focus: false };
+    unfocused = true;
+  }
   const unpinned = params;
   if (msg.method === 'Target.createTarget' && !params.browserContextId && chat.context) {
     params = { ...params, browserContextId: chat.context };
     pinned = true;
   }
   const id = nextId++;
-  pending.set(id, { client, origId: msg.id, strip, method: msg.method, params, pinned, unpinned, upSession: sessionId });
+  pending.set(id, { client, origId: msg.id, strip, method: msg.method, params, pinned, unpinned, unfocused, asked, upSession: sessionId });
   const out = JSON.stringify({ id, method: msg.method, params, sessionId });
   // A click waits a moment after the mouse moved there, so the cursor arrives first.
   let wait = 0;
@@ -332,9 +371,81 @@ function forward(client, data) {
     .then(() => (wait ? new Promise((r) => setTimeout(r, wait)) : null))
     .then(() => {
       if (!up || !up.open) return;
-      if (said) callChrome('Runtime.evaluate', { expression: `window.postMessage(${JSON.stringify(said)}, '*')` }, sessionId).catch(() => {});
+      if (said) tellPage(sessionId, said);
       up.ws.send(out);
     });
+}
+
+// Post a message for the Tether extension into a page (it's plain data the
+// page could post itself; see extension/README.md, Limits).
+function tellPage(sessionId, data) {
+  callChrome('Runtime.evaluate', { expression: `window.postMessage(${JSON.stringify(data)}, '*')` }, sessionId).catch(() => {});
+}
+
+// The client's session attached to this tab, if it has one.
+function sessionOfTarget(client, target) {
+  if (!target) return null;
+  for (const s of client.sessions) if (s !== client.browserSession && sessionTargets.get(s) === target) return s;
+  return null;
+}
+
+// ----------------------------------------------- showing Claude's tabs
+
+// Tabs a chat opened in the background and not shown yet, and the URL of each
+// page session's main frame (from Page.frameNavigated).
+const unshown = new Set();
+const pageUrls = new Map();
+
+// Asks the Tether extension, in the page, to select this tab in its window.
+// True once the extension answered. No timer decides it (on a busy page a
+// timer can run before an answer sent earlier): two more messages follow the
+// request, and the answer is sent while the request is being delivered, so
+// it arrives before the second one if the extension is there at all.
+const FRONT_PROBE = `new Promise((resolve) => {
+  const id = Math.random().toString(36).slice(2);
+  const done = (yes) => { removeEventListener('message', on); clearTimeout(stuck); resolve(yes); };
+  const on = (e) => {
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.id !== id) return;
+    if (d.tether === 'front-ack') done(true);
+    else if (d.tether === 'claude-front') postMessage({ tether: 'claude-front-after', id, n: 1 }, '*');
+    else if (d.tether === 'claude-front-after') { if (d.n === 1) postMessage({ tether: 'claude-front-after', id, n: 2 }, '*'); else done(false); }
+  };
+  addEventListener('message', on);
+  postMessage({ tether: 'claude-front', id }, '*');
+  const stuck = setTimeout(() => done(false), 5000);
+})`;
+
+// Show a chat's tab: the extension selects it in its window and Chrome's
+// window stays where it is. Without the extension (or on a page it can't
+// enter, such as data: or chrome:), Chrome's own way, which raises the window.
+const raisedLogged = new Map();
+function showTab(session, target, url) {
+  const chromesWay = () => {
+    if (!up || !up.open) return;
+    callChrome('Target.activateTarget', { targetId: target }).catch(() => {});
+    const owner = owners.get(session);
+    const label = owner ? owner.who.label : 'a chat';
+    if (Date.now() - (raisedLogged.get(label) || 0) > 10 * 60000) {
+      raisedLogged.set(label, Date.now());
+      log(`${label}: its tab was shown Chrome's way, which brings Chrome to the front (${url && !/^(https?|file):/i.test(url)
+        ? 'a page the extension cannot enter' : 'no Tether extension answered in that tab'})`);
+    }
+  };
+  if (url && !/^(https?|file):/i.test(url)) { chromesWay(); return; }
+  callChrome('Runtime.evaluate', { expression: FRONT_PROBE, awaitPromise: true, returnByValue: true }, session)
+    .then((r) => { if (!(r && r.result && r.result.value === true)) chromesWay(); }, chromesWay);
+}
+
+// A background tab Claude opened is shown once its first page (not the blank
+// one it starts with) has loaded.
+function showWhenLoaded(session) {
+  const target = sessionTargets.get(session);
+  if (!target || !unshown.has(target)) return;
+  const url = pageUrls.get(session) || '';
+  if (!url || url.startsWith('about:blank')) return;
+  unshown.delete(target);
+  showTab(session, target, url);
 }
 
 // What the extension needs to know about Claude's own mouse and keys, so its

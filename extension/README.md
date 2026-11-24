@@ -40,7 +40,10 @@ Claude Code ──(chrome-devtools-mcp, 127.0.0.1)──▶ your tab
     with the Tether broker in between: just before each of
     Claude's mouse moves and clicks it posts
            { tether: 'claude-pointer', x, y, press }
-    (and { tether: 'claude-typing' } once per burst of keys)
+    (and { tether: 'claude-typing' } once per burst of keys),
+    and { tether: 'claude-front' } to show a tab Claude opened
+    in the background: the extension selects it in its window,
+    so Chrome's window never has to come to the front
                          │
                          ▼
        content.js (in the page)      ──▶  background.js (service worker)

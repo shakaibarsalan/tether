@@ -583,7 +583,8 @@ class LiveProcessTest(LiveBase):
         answer = self.verify(client.getsockname()[1])
         self.assertFalse(answer["Allowed"], answer)
         self.assertEqual(answer["ProcessId"], os.getpid())
-        self.assertEqual(answer["Kind"], "unknown")
+        # "claude-script" when the tests themselves run inside a Claude Code session
+        self.assertIn(answer["Kind"], ("unknown", "claude-script"))
 
     def test_claude_tool_from_a_terminal_is_named_but_refused(self):
         client_port, claude = self.fake_session(app_parent=False)
