@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Claude's tabs in a profile without your logins or the extension:** a chat's first tab opened in Chrome's default profile, which needn't be the one you use: a new window, not signed in, the old orange frame instead of the extension's look, and Chrome brought to the front. Now the broker opens Claude's tabs in the profile where the Tether extension is loaded. It knows the extension by its ID (Chrome makes an unpacked extension's ID from its folder's path; the broker works it out for its own `extension` folder, and takes more from `"extensionIds"` in `~/.tether/config.json`), and finds its profile when the extension's service worker runs there or the extension answers in a tab. A chat whose tabs are in a profile without the extension moves to that one for its next tab. With no such profile, nothing changes. `broker.log` says which profile a chat's tabs go to.
+- **The same site opened again and again:** which tabs a chat opened was kept only in the broker's memory, so after a broker restart the chat's own tabs were "not yours" and it opened new ones. The broker now keeps it in `~/.tether/broker-chats.json` for the same Chrome run (only chats whose Claude Code process still runs come back; a new Chrome run starts afresh).
+- **Tests:** `tests/broker-profile.mjs` (a fake Chrome with two profiles: the default until the extension is seen, then your profile; remembered while the extension sleeps; an explicit profile left as asked; the chat's tabs kept across a broker restart, not across a Chrome restart), run from the unit tests; the extension end-to-end test checks the broker finds the real extension's profile by its ID; the ID formula against the one Chrome gave on Windows. 130 tests.
+
 ## 0.3.4 (2026-11-25)
 
 The first release since 0.3.0: it also has everything in 0.3.1, 0.3.2 and 0.3.3 ([CHANGELOG.md](https://github.com/shakaibarsalan/tether/blob/main/CHANGELOG.md): the tab marker that no longer misses the extension, the broker's quick identity check, a chat working only in its own tabs, Claude's cursor that follows only Claude). After updating: reload the Tether extension (1.1.2) in `chrome://extensions` in each Chrome profile, and restart the broker (`scripts/broker-setup.ps1 -Restart` or `scripts/broker-setup.sh --restart`); Chrome asks "Allow?" once.

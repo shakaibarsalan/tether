@@ -288,6 +288,7 @@ if (fs.existsSync(wsMod) && fs.existsSync(path.join(userDataDir, 'DevToolsActive
   const broker = spawn(process.execPath, [path.join(repo, 'broker', 'tether-broker.mjs'), '--port', String(bport), '--lazy', '--no-notify',
     '--insecure-allow-any-client', '--chrome-user-data', userDataDir, '--log', blog], { stdio: 'ignore' });
   for (let i = 0; i < 100; i++) { try { if ((await fetch(`http://127.0.0.1:${bport}/json/version`)).ok) break; } catch { /* */ } await sleep(100); }
+  await shown.reload({ waitUntil: 'load' });   // a page load wakes the extension's service worker
   const claude = await puppeteer.connect({ browserWSEndpoint: `ws://127.0.0.1:${bport}/devtools/browser/tether`, defaultViewport: null });
   const mine = await claude.newPage();
   const atFirst = await mine.evaluate(() => document.visibilityState);
@@ -298,6 +299,8 @@ if (fs.existsSync(wsMod) && fs.existsSync(path.join(userDataDir, 'DevToolsActive
   ok("through the broker, Claude's new tab starts in the background", atFirst === 'hidden', atFirst);
   ok('...and the extension shows it once its page is there', shownNow === 'visible', shownNow);
   ok("...so the broker never had to raise Chrome's window", !blogText.includes("Chrome's way"), blogText.split('\n').filter((l) => l.includes("Chrome's way")).join(' | '));
+  ok('the broker found the profile with the Tether extension (by its id)', blogText.includes('its tabs open in the profile with the Tether extension'),
+    blogText.split('\n').filter((l) => l.includes('its tabs open')).join(' | '));
   await mine.click('#go');   // clicks work in it
   ok('Claude can click in that tab', true);
   await claude.disconnect();

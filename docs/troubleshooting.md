@@ -42,6 +42,17 @@ starting the task in Task Scheduler doesn't restart the broker; the log then say
 `port 9333 is busy`. `scripts\connect-watch.ps1 -ExplainPid <pid>` shows how a
 chrome-devtools-mcp process is judged and how long that takes.
 
+### Claude's tabs open in another profile (not signed in, the old orange frame)
+Claude's tabs go to the Chrome profile where the Tether extension is loaded.
+`broker.log` says which: "its tabs open in the profile with the Tether extension",
+or "Chrome's default profile (no profile with the Tether extension found)".
+- Load the extension (`chrome://extensions` > Load unpacked > the `extension`
+  folder) in the profile you're signed in to, and browse there once.
+- Loaded it from another folder (a release you unpacked)? The broker knows the
+  extension by an ID made from its folder. Copy the ID from `chrome://extensions`
+  into `~/.tether/config.json`: `{ "extensionIds": ["abcd..."] }`, then restart
+  the broker.
+
 ### Removing everything
 `uninstall.ps1` removes the broker, the DevTools server, the connect watch and
 the bridge block. `scripts\guard-uninstall.ps1` removes the guard. Both back up

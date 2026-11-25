@@ -39,6 +39,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 
@@ -119,6 +120,108 @@ function chatOf(client) {
   return chats.get(k);
 }
 
+// Kept on disk too, for the same Chrome run, so a broker restart doesn't turn a
+// chat's own tabs into "not yours" (the chat then opened the same site again in
+// a new tab). Only chats whose Claude Code process is still running come back.
+const TETHER_HOME = process.env.TETHER_HOME || path.join(os.homedir(), '.tether');
+const CHATS_FILE = path.join(TETHER_HOME, 'broker-chats.json');
+let saveTimer = null;
+function saveChats() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (!up) return;
+    const list = [...chats].filter(([k]) => /^c\d+$/.test(k))
+      .map(([k, c]) => [k, { targets: [...c.targets].slice(-200), context: c.context, adoptUntil: c.adoptUntil, cliId: c.cliId }]);
+    try {
+      fs.mkdirSync(TETHER_HOME, { recursive: true });
+      fs.writeFileSync(CHATS_FILE, JSON.stringify({ stamp: up.stamp, extensionSeen: [...extensionSeen], chats: list }));
+    } catch { /* kept in memory */ }
+  }, 1000);
+  saveTimer.unref();
+}
+function loadChats(stamp) {
+  let d;
+  try { d = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8')); } catch { return; }
+  if (!d || d.stamp !== stamp) return;   // another Chrome run: its tab ids mean nothing now
+  for (const [k, c] of d.chats || []) {
+    if (!/^c\d+$/.test(k) || !alive(Number(k.slice(1))) || chats.has(k)) continue;
+    chats.set(k, { targets: new Set(c.targets || []), context: c.context || null, adoptUntil: Number(c.adoptUntil) || 0, cliId: String(c.cliId || '') });
+  }
+  for (const [ctx, at] of d.extensionSeen || []) if (!extensionSeen.has(ctx)) extensionSeen.set(ctx, Number(at) || 0);
+}
+
+// ------------------------------------------- which Chrome profile Claude uses
+
+// Claude's tabs belong in the profile where you loaded the Tether extension:
+// that's the one with your logins, and where groups and "Chrome stays put"
+// work. Chrome's default for a new tab can be another profile, without your
+// logins or the extension.
+//
+// Chrome names an unpacked extension after its folder: SHA-256 of the path
+// (UTF-16 on Windows, UTF-8 elsewhere), the first 32 hex digits written as the
+// letters a-p. The extension folder next to the broker (and its real path),
+// plus any IDs in ~/.tether/config.json "extensionIds" (another folder, the store).
+function unpackedExtensionId(dir, platform = process.platform) {
+  const bytes = Buffer.from(dir, platform === 'win32' ? 'utf16le' : 'utf8');
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 32).replace(/./g, (c) => String.fromCharCode(97 + parseInt(c, 16)));
+}
+const TETHER_IDS = (() => {
+  const dir = path.resolve(here, '..', 'extension');
+  const dirs = new Set([dir]);
+  try { dirs.add(fs.realpathSync(dir)); } catch { /* no folder */ }
+  const ids = new Set([...dirs].map((d) => unpackedExtensionId(d)));
+  try {
+    for (const id of JSON.parse(fs.readFileSync(path.join(TETHER_HOME, 'config.json'), 'utf8')).extensionIds || []) {
+      if (/^[a-p]{32}$/.test(id)) ids.add(id);
+    }
+  } catch { /* no config */ }
+  return ids;
+})();
+
+// Profiles (browser contexts) where the extension was seen: its background
+// worker running there, or its answer in one of their tabs. -> when.
+const extensionSeen = new Map();
+
+// Profiles with the extension that are still open, the most recently seen first.
+async function extensionProfiles() {
+  let infos = [];
+  try { infos = (await callChrome('Target.getTargets')).targetInfos || []; } catch { return []; }
+  const pages = new Map();
+  for (const t of infos) {
+    if (!t.browserContextId) continue;
+    if (t.type === 'page') pages.set(t.browserContextId, (pages.get(t.browserContextId) || 0) + 1);
+    const m = /^chrome-extension:\/\/([a-p]{32})\//.exec(t.url || '');
+    if (m && TETHER_IDS.has(m[1])) extensionSeen.set(t.browserContextId, Date.now());
+  }
+  return [...extensionSeen.keys()].filter((c) => pages.has(c))
+    .sort((a, b) => extensionSeen.get(b) - extensionSeen.get(a) || pages.get(b) - pages.get(a));
+}
+
+// The profile for a chat's next tab: where its tabs are if that profile has the
+// extension, else the most recent profile with the extension, else where its
+// tabs are (or Chrome's default).
+const profileLogged = new Map();
+async function profileFor(client, chat) {
+  const found = await extensionProfiles();
+  let ctx = chat.context;
+  if (found.length && !found.includes(ctx)) ctx = found[0];
+  const note = found.length ? 'the profile with the Tether extension' : "Chrome's default profile (no profile with the Tether extension found)";
+  if (profileLogged.get(client.session.id) !== note) {
+    profileLogged.set(client.session.id, note);
+    log(`${client.who.label}: its tabs open in ${note}`);
+  }
+  if (ctx !== chat.context) { chat.context = ctx; saveChats(); }
+  return ctx;
+}
+
+// The extension answered in this tab: its profile has the extension.
+function noteExtensionIn(target) {
+  callChrome('Target.getTargetInfo', { targetId: target })
+    .then((r) => { const ctx = r && r.targetInfo && r.targetInfo.browserContextId; if (ctx) { extensionSeen.set(ctx, Date.now()); saveChats(); } })
+    .catch(() => {});
+}
+
 // Newer Chrome on macOS keeps its data folder private to itself (EPERM for everyone
 // else). scripts/port-mirror-setup.sh then keeps a copy of the port file here.
 const PORT_MIRROR = path.join(process.env.TETHER_HOME || path.join(os.homedir(), '.tether'), 'chrome', 'DevToolsActivePort');
@@ -155,7 +258,7 @@ function connectChrome() {
   });
   const entry = { ws, open: false, stamp: info.stamp };
   entry.ready = new Promise((resolve, reject) => {
-    ws.once('open', () => { entry.open = true; log('connected to Chrome'); resolve(); });
+    ws.once('open', () => { entry.open = true; log('connected to Chrome'); loadChats(info.stamp); resolve(); });
     ws.once('error', (e) => reject(e));
     ws.once('close', () => { if (!entry.open) reject(new Error('Chrome closed the connection (Allow declined or timed out?)')); });
   });
@@ -170,7 +273,10 @@ function connectChrome() {
     sessionTargets.clear();
     unshown.clear();
     pageUrls.clear();
-    for (const c of chats.values()) { c.targets.clear(); c.context = null; } // a new Chrome run, new ids
+    // ids belong to a Chrome run: forget them (the same run, reconnected, reads them back from the file)
+    chats.clear();
+    extensionSeen.clear();
+    profileLogged.clear();
     for (const c of clients) c.ws.close(1011, 'Chrome connection closed');
   });
   up = entry;
@@ -220,12 +326,15 @@ function onChromeMessage(data) {
         if (p.unfocused) unshown.add(msg.result.targetId);
         if (!chat.context) {
           callChrome('Target.getTargetInfo', { targetId: msg.result.targetId })
-            .then((r) => { if (!chat.context && r && r.targetInfo) chat.context = r.targetInfo.browserContextId || null; })
+            .then((r) => { if (!chat.context && r && r.targetInfo) { chat.context = r.targetInfo.browserContextId || null; saveChats(); } })
             .catch(() => {});
         }
+        saveChats();
       } else if (msg.error && p.pinned) {
         // the profile this chat used is gone (its windows were closed): open the tab Chrome's default way
-        chat.context = null;
+        if (chat.context === p.params.browserContextId) chat.context = null;
+        extensionSeen.delete(p.params.browserContextId);
+        saveChats();
         const id = nextId++;
         pending.set(id, { ...p, pinned: false });
         up.ws.send(JSON.stringify({ id, method: p.method, params: p.unpinned, sessionId: p.upSession }));
@@ -263,7 +372,7 @@ function onChromeMessage(data) {
   // a popup or new tab opened from one of the chat's own tabs is the chat's too
   if (info && info.openerId && /^Target\.(targetCreated|targetInfoChanged|attachedToTarget)$/.test(msg.method)) {
     const chat = chatOf(owner);
-    if (chat.targets.has(info.openerId)) chat.targets.add(info.targetId);
+    if (chat.targets.has(info.openerId) && !chat.targets.has(info.targetId)) { chat.targets.add(info.targetId); saveChats(); }
   }
   send(owner, msg.sessionId === owner.browserSession ? { method: msg.method, params: msg.params } : msg);
 }
@@ -340,25 +449,18 @@ function forward(client, data) {
     }
     // a tab the broker knows nothing about: Chrome's own way
   }
-  // A new tab opens in the profile of the chat's first tab, and in the
-  // background (focus: false), so Chrome's window doesn't come to the front.
-  // Once its first page is there, showTab selects it in its window.
+  // A new tab opens in the profile with the Tether extension (profileFor), and
+  // in the background (focus: false), so Chrome's window doesn't come to the
+  // front. Once its first page is there, showTab selects it in its window.
   const asked = msg.params || {};
   let params = asked;
-  let pinned = false;
   let unfocused = false;
   if (msg.method === 'Target.createTarget' && params.background !== true && params.focus === undefined) {
     params = { ...params, focus: false };
     unfocused = true;
   }
   const unpinned = params;
-  if (msg.method === 'Target.createTarget' && !params.browserContextId && chat.context) {
-    params = { ...params, browserContextId: chat.context };
-    pinned = true;
-  }
-  const id = nextId++;
-  pending.set(id, { client, origId: msg.id, strip, method: msg.method, params, pinned, unpinned, unfocused, asked, upSession: sessionId });
-  const out = JSON.stringify({ id, method: msg.method, params, sessionId });
+  const chooseProfile = msg.method === 'Target.createTarget' && !params.browserContextId;
   // A click waits a moment after the mouse moved there, so the cursor arrives first.
   let wait = 0;
   if (msg.method === 'Input.dispatchMouseEvent') {
@@ -366,14 +468,21 @@ function forward(client, data) {
     else if (params.type === 'mousePressed' && Date.now() - (client.movedAt || 0) < 1000) wait = CLICK_LEAD_MS;
   }
   const said = !strip ? claudeInput(client, msg.method, params) : null;
-  // in order: what comes after a held click waits for it
+  // in order: what comes after a held click (or a profile lookup) waits for it
   client.out = client.out
     .then(() => (wait ? new Promise((r) => setTimeout(r, wait)) : null))
-    .then(() => {
+    .then(async () => {
       if (!up || !up.open) return;
+      let pinned = false;
+      if (chooseProfile) {
+        const ctx = await profileFor(client, chat);
+        if (ctx) { params = { ...params, browserContextId: ctx }; pinned = true; }
+      }
+      const id = nextId++;
+      pending.set(id, { client, origId: msg.id, strip, method: msg.method, params, pinned, unpinned, unfocused, asked, upSession: sessionId });
       if (said) tellPage(sessionId, said);
-      up.ws.send(out);
-    });
+      up.ws.send(JSON.stringify({ id, method: msg.method, params, sessionId }));
+    }).catch(() => {});
 }
 
 // Post a message for the Tether extension into a page (it's plain data the
@@ -434,7 +543,7 @@ function showTab(session, target, url) {
   };
   if (url && !/^(https?|file):/i.test(url)) { chromesWay(); return; }
   callChrome('Runtime.evaluate', { expression: FRONT_PROBE, awaitPromise: true, returnByValue: true }, session)
-    .then((r) => { if (!(r && r.result && r.result.value === true)) chromesWay(); }, chromesWay);
+    .then((r) => { if (r && r.result && r.result.value === true) noteExtensionIn(target); else chromesWay(); }, chromesWay);
 }
 
 // A background tab Claude opened is shown once its first page (not the blank
@@ -472,7 +581,7 @@ function adopt({ session, pid, minutes }) {
   const until = Date.now() + Math.min(Math.max(Number(minutes) || 30, 1), 60) * 60000;
   let n = 0;
   for (const [key, chat] of chats) {
-    if ((session && chat.cliId === session) || (pid && key === `c${pid}`)) { chat.adoptUntil = until; n++; }
+    if ((session && chat.cliId === session) || (pid && key === `c${pid}`)) { chat.adoptUntil = until; n++; saveChats(); }
   }
   if (n) log(`a chat was lent the user's tabs until ${new Date(until).toTimeString().slice(0, 5)} (the user asked for one)`);
   return n;
@@ -494,7 +603,7 @@ async function onClient(ws, who) {
     for (const data of client.queue.splice(0)) forward(client, data);
     withName(who).then(() => {
       if (who.info && who.info.Title && !client.session.title) client.session.title = who.info.Title;
-      if (who.info && who.info.SessionId) chatOf(client).cliId = who.info.SessionId;
+      if (who.info && who.info.SessionId) { chatOf(client).cliId = who.info.SessionId; saveChats(); }
       log(`${who.label}: let in`);
       if (who.allowed) notify(who); // not for the tests' --insecure-allow-any-client
     });
@@ -759,7 +868,7 @@ function sessionToken(client) {
     s.checkedAt = Date.now();
     slowWorker.ask(`session ${s.claudePid}`, 30000).then((r) => {
       if (r && r.Title) s.title = r.Title;
-      if (r && r.Id && chats.has(s.id)) chats.get(s.id).cliId = r.Id;
+      if (r && r.Id && chats.has(s.id)) { chats.get(s.id).cliId = r.Id; saveChats(); }
     }).catch(() => {});
   }
   return Buffer.from(JSON.stringify({ id: s.id, title: s.title }), 'utf8').toString('base64');
@@ -816,6 +925,8 @@ server.on('upgrade', async (req, socket, head) => {
   if (!hostOk(req) || req.headers.origin) { deny('403 Forbidden', `a connection with Host ${req.headers.host} / Origin ${req.headers.origin}`); return; }
   if (new URL(req.url, 'http://x').pathname !== PATHNAME) { deny('404 Not Found', `a connection to ${req.url}`); return; }
   let who = { label: `client :${socket.remotePort}` };
+  // tests only (with --insecure-allow-any-client): stand in for a Claude Code process, so a chat is kept
+  if (ALLOW_ANY && Number(process.env.TETHER_TEST_CLAUDE_PID) > 0) who.info = { ClaudePid: Number(process.env.TETHER_TEST_CLAUDE_PID) };
   if (!ALLOW_ANY) {
     const v = await verifyClient(socket.remotePort);
     if (!v.allowed) {

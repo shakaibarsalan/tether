@@ -6,6 +6,7 @@ dependency, or no longer blocking commands that close Chrome.
 
 The full test against a throwaway Chrome is tests/broker-e2e.mjs."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -189,6 +190,21 @@ class BrokerFocusTest(unittest.TestCase):
                            capture_output=True, text=True, encoding="utf-8", timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("FAIL", r.stdout)
+
+    def test_tabs_open_in_the_profile_with_the_extension_and_survive_a_restart(self):
+        # tests/broker-profile.mjs: a fake Chrome with two profiles, and a broker restarted in between
+        r = subprocess.run([NODE, os.path.join(ROOT, "tests", "broker-profile.mjs")],
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("FAIL", r.stdout)
+
+    def test_extension_id_is_the_one_chrome_gives_the_unpacked_folder(self):
+        # seen on Windows: C:\Drive\tether\extension loaded unpacked is gnjnmlhgeobmcdiceboflhdfehlmjlnd
+        digest = hashlib.sha256("C:\\Drive\\tether\\extension".encode("utf-16-le")).hexdigest()[:32]
+        self.assertEqual("".join(chr(ord("a") + int(c, 16)) for c in digest), "gnjnmlhgeobmcdiceboflhdfehlmjlnd")
+        src = read(os.path.join(BROKER, "tether-broker.mjs"))
+        self.assertIn("platform === 'win32' ? 'utf16le' : 'utf8'", src)
+        self.assertIn("slice(0, 32).replace(/./g, (c) => String.fromCharCode(97 + parseInt(c, 16)))", src)
 
 
 if __name__ == "__main__":

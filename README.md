@@ -210,7 +210,8 @@ The broker also tells the extension which session each tab belongs to: the tab-m
 Per chat (one Claude session, across reconnects) the broker also keeps:
 
 - **its own tabs.** The tabs it opened, and tabs those opened. Navigating, clicking, typing into or closing any other tab, i.e. yours, is refused, and the tab marker can't mark it. When you ask Claude to use one of your tabs, the tab guard's confirming second `select_page` lends the chat your tabs for 30 minutes.
-- **its profile.** New tabs open in the Chrome profile of the chat's first tab, not wherever Chrome's default is.
+- **its profile.** New tabs open in the Chrome profile where you loaded the Tether extension (your logins are there, and the groups and "Chrome stays put" work there), not wherever Chrome's default is. The broker knows that profile by the extension's ID, made from the folder you loaded it from; if that's not the `extension` folder of this copy, add its ID (from `chrome://extensions`) to `"extensionIds"` in `~/.tether/config.json`. With no such profile, a chat stays in the profile of its first tab.
+- **its tabs, across a broker restart.** Which tabs a chat opened is kept in `~/.tether/broker-chats.json` for the same Chrome run, so a restarted broker doesn't turn them into "not yours" (the chat then opened the same site again in new tabs).
 - **a beat before each click.** A click waits 220 ms after the mouse moved, so the extension's cursor gets there first.
 - **Chrome where you left it.** Claude's new tabs open in the background, so Chrome's window doesn't come to the front while you work in another app; once a tab's page is there, the extension makes it the shown tab of its window. "Bring to front" does the same, and never for your tabs. Without the extension the tab is shown Chrome's way, which raises Chrome (`broker.log` says when).
 - **where Claude's mouse is.** Just before each of Claude's mouse moves and clicks, the broker posts its position into the page (and, once per burst of keys, that Claude is typing). The extension's cursor follows only that, so your own mouse never drags it along.
@@ -302,7 +303,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-128 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
+130 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 
