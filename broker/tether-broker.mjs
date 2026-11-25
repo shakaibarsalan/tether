@@ -568,6 +568,9 @@ class Worker {
       this.proc = null;
       try { p.kill(); } catch { /* gone */ }
       this.fail(new Error('check timed out'));
+      // started now, so the next check doesn't also wait for a worker to start
+      // (on a computer busy enough to time a check out, that takes long too)
+      if (!this.proc) this.start();
     }, job.timeoutMs);
     this.proc.stdin.write(job.line + '\n');
   }
@@ -834,7 +837,10 @@ server.on('error', (e) => {
 
 server.listen(PORT, HOST, () => {
   log(`listening on ws://${HOST}:${PORT}${PATHNAME}${ALLOW_ANY ? ' (INSECURE: letting any client in, tests only)' : ''}`);
-  if (!ALLOW_ANY) warmUp();
+  if (!ALLOW_ANY) {
+    worker.start();   // ready before the first session connects
+    warmUp();
+  }
 });
 
 // Connect as soon as Chrome is running, and again after Chrome restarts, so the
