@@ -211,6 +211,23 @@ class ConnectWatchLogicTest(unittest.TestCase):
         self.assertEqual(out, {"anthropic": True, "anthropic, with a comma": True, "other team": False, "other company": False,
                                "look-alike": False, "not Apple's chain": False, "apple": False, "ad hoc": False})
 
+    def test_netstat_names_each_sockets_program(self):
+        """netstat -anv -p tcp: one kernel query instead of lsof looking through every program's files."""
+        text = (
+            "Active Internet connections (including servers)\n"
+            "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)          rxbytes      txbytes  rhiwat  shiwat          process:pid    state  options           gencnt    flags   flags1 usecnt rtncnt fltrs\n"
+            "tcp4       0      0  127.0.0.1.9333         127.0.0.1.61194        ESTABLISHED       338424      2974783  266816  269868             node:13371  00102 00000104 00000000000bb865 00000081 01002800      2      0 000000\n"
+            "tcp4       0      0  127.0.0.1.61194        127.0.0.1.9333         ESTABLISHED      6159490       154964  809464  146988             node:8629   00102 00000100 00000000000bb864 00000081 04000900      2      0 000000\n"
+            "tcp4       0      0  127.0.0.1.52000        127.0.0.1.9222         ESTABLISHED          100          200  131072  131072  Google Chrome He:4321  00102 00000100 00000000000bb000 00000081 04000900      2      0 000000\n"
+            "tcp6       0      0  ::1.8080               ::1.53000              ESTABLISHED            0            0  131072  131072            python3:777  00102 00000100 00000000000bb001 00000081 04000900      2      0 000000\n"
+            "tcp4       0      0  127.0.0.1.9333         *.*                    LISTEN               0            0  131072  131072             node:13371  00002 00000106 0000000000000001 00000000 00000800      1      0 000001\n"
+        )
+        out = node_eval(f"console.log(JSON.stringify(w.parseNetstat({json.dumps(text)})));")
+        est = [(c["localPort"], c["remotePort"], c["pid"]) for c in out if c["state"] == "ESTABLISHED"]
+        self.assertEqual(est, [(9333, 61194, 13371), (61194, 9333, 8629), (52000, 9222, 4321), (8080, 53000, 777)])
+        self.assertEqual(out[1]["localAddr"], "127.0.0.1")
+        self.assertEqual(out[3]["remoteAddr"], "::1")
+
     def test_codesign_identifier_is_read(self):
         out = node_eval(f"console.log(JSON.stringify(w.parseCodesign({json.dumps(self.ANTHROPIC)}).identifier));")
         self.assertEqual(out, "com.anthropic.claude-code")
@@ -611,6 +628,26 @@ class LiveProcessTest(LiveBase):
         self.assertIn("sh", answer["Chain"], answer)
         self.assertTrue(answer["AppPath"].endswith("/Claude.app"), answer)
         self.assertTrue(answer["Allowed"], answer)
+
+    def test_the_brokers_quick_check_gives_the_same_verdict(self):
+        """"check <port> <pid>": the broker found the pid, so only the process and its
+        parents are read and the chat's name is left for later ("session <pid>")."""
+        client_port, _ = self.fake_session(app_parent=True)
+        w = subprocess.Popen([NODE, WATCH, "--serve", "--server-port", str(self.port)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+        self.addCleanup(lambda: (w.stdin.close(), w.wait(), w.stdout.close()))
+        ask = lambda line: (w.stdin.write(line + "\n"), w.stdin.flush(), json.loads(w.stdout.readline()))[2]
+        full = ask(f"verify {client_port}")
+        quick = ask(f"check {client_port} {full['ProcessId']}")
+        for key in ("Allowed", "Kind", "ProcessId", "ClaudePid", "AppPath", "ClaudePath"):
+            self.assertEqual(quick[key], full[key], key)
+        self.assertTrue(quick["Allowed"], quick)   # the rule passes; the broker then checks the signatures
+        self.assertEqual(full["Title"], "Fake browser task")
+        self.assertEqual(quick["Title"], "")       # looked up after the decision
+        self.assertIn("processes", quick["Ms"])
+        self.assertEqual(ask(f"session {quick['ClaudePid']}")["Title"], "Fake browser task")
+        # a pid that isn't a Claude tool stays refused in the quick check too
+        self.assertFalse(ask(f"check {client_port} {os.getpid()}")["Allowed"])
 
     def test_apple_signed_program_is_not_anthropic(self):
         out = json.loads(subprocess.run([NODE, WATCH, "--check-signature", "/bin/ls"], capture_output=True, text=True, timeout=120).stdout)

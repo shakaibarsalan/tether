@@ -611,17 +611,29 @@ function signedByAnthropic(file) {
 
 // Which process owns the client end of this connection? netstat (lsof on macOS)
 // answers in a fraction of a second, without PowerShell.
-function pidOf(remotePort) {
+// One retry: on a busy computer the first look can come back empty.
+async function pidOf(remotePort) {
+  const pid = await pidOnce(remotePort);
+  if (pid) return pid;
+  await new Promise((r) => setTimeout(r, 250));
+  return pidOnce(remotePort);
+}
+
+function pidOnce(remotePort) {
   if (IS_MAC) {
+    // netstat -anv names each socket's program ("node:8629") in one question to
+    // the kernel; lsof looks through every program's files, which on a busy
+    // Mac took long enough to refuse real sessions. lsof only if netstat can't.
     return new Promise((resolve) => {
-      execFile('/usr/sbin/lsof', ['-nP', `-iTCP:${remotePort}`, '-sTCP:ESTABLISHED', '-Fpn'],
-        { timeout: 15000, env: { ...process.env, LC_ALL: 'C' } }, (_err, stdout) => {
-          let pid = 0;
-          for (const line of String(stdout || '').split(/\r?\n/)) {
-            if (line[0] === 'p') pid = Number(line.slice(1));
-            else if (line.startsWith(`n127.0.0.1:${remotePort}->127.0.0.1:${PORT}`)) { resolve(pid); return; }
+      execFile('/usr/sbin/netstat', ['-anv', '-p', 'tcp'], { timeout: 10000, env: { ...process.env, LC_ALL: 'C' }, maxBuffer: 64 * 1024 * 1024 },
+        (_err, stdout) => {
+          const text = String(stdout || '');
+          if (/process:pid/.test(text)) {
+            const re = new RegExp(`^tcp4\\s+\\d+\\s+\\d+\\s+127\\.0\\.0\\.1\\.${remotePort}\\s+127\\.0\\.0\\.1\\.${PORT}\\s+ESTABLISHED\\s.*?:(\\d+)\\s+[0-9a-f]{5}\\s`, 'im');
+            const m = re.exec(text);
+            if (m) { resolve(Number(m[1])); return; }
           }
-          resolve(0);
+          lsofPid(remotePort).then(resolve);
         });
     });
   }
@@ -637,6 +649,20 @@ function pidOf(remotePort) {
   });
 }
 
+function lsofPid(remotePort) {
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/lsof', ['-nP', `-iTCP:${remotePort}`, '-sTCP:ESTABLISHED', '-Fpn'],
+      { timeout: 15000, env: { ...process.env, LC_ALL: 'C' } }, (_err, stdout) => {
+        let pid = 0;
+        for (const line of String(stdout || '').split(/\r?\n/)) {
+          if (line[0] === 'p') pid = Number(line.slice(1));
+          else if (line.startsWith(`n127.0.0.1:${remotePort}->127.0.0.1:${PORT}`)) { resolve(pid); return; }
+        }
+        resolve(0);
+      });
+  });
+}
+
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
 // chrome-devtools-mcp processes already checked and let in. A session that
@@ -647,21 +673,40 @@ setInterval(() => { for (const pid of approved.keys()) if (!alive(pid)) approved
 // Who is on the other end of this TCP connection? The worker finds the process
 // and its parents; the broker then checks the two signatures.
 async function verifyClient(remotePort) {
+  const t0 = Date.now();
   const pid = await pidOf(remotePort);
+  const tPid = Date.now() - t0;
   if (pid && approved.has(pid) && alive(pid)) return { ...approved.get(pid), again: true };
   let v;
   // With the pid known, the worker skips finding it again and leaves the chat's
-  // name for later (nameSession): both were slow on a busy PC, and checks timed out.
+  // name for later (withName): both were slow on a busy computer, and checks timed out.
   const ask = pid ? `check ${remotePort} ${pid}` : `verify ${remotePort}`;
+  const t1 = Date.now();
   try { v = await worker.ask(ask, 50000); } catch (e) { v = { Error: e.message }; }
-  if (v.Error) return { allowed: false, label: `client :${remotePort}`, reason: v.Error, info: {} };
-  const answer = { allowed: v.Allowed === true, label: v.Label || `client :${remotePort}`, reason: v.Reason || '', info: v };
-  if (answer.allowed) {
-    const [cli, app] = await Promise.all([signedByAnthropic(v.ClaudePath), signedByAnthropic(v.AppPath)]);
-    if (!cli) Object.assign(answer, { allowed: false, reason: `Claude Code isn't signed by Anthropic (${v.ClaudePath})` });
-    else if (!app) Object.assign(answer, { allowed: false, reason: `the Claude app isn't signed by Anthropic (${v.AppPath})` });
+  const tCheck = Date.now() - t1;
+  let tSig = 0;
+  let answer;
+  if (v.Error) {
+    answer = { allowed: false, label: `client :${remotePort}`, reason: v.Error, info: {} };
+  } else {
+    answer = { allowed: v.Allowed === true, label: v.Label || `client :${remotePort}`, reason: v.Reason || '', info: v };
+    if (answer.allowed) {
+      const t2 = Date.now();
+      const [cli, app] = await Promise.all([signedByAnthropic(v.ClaudePath), signedByAnthropic(v.AppPath)]);
+      tSig = Date.now() - t2;
+      if (!cli) Object.assign(answer, { allowed: false, reason: `Claude Code isn't signed by Anthropic (${v.ClaudePath})` });
+      else if (!app) Object.assign(answer, { allowed: false, reason: `the Claude app isn't signed by Anthropic (${v.AppPath})` });
+    }
+    if (answer.allowed && v.ProcessId) approved.set(v.ProcessId, answer);
   }
-  if (answer.allowed && v.ProcessId) approved.set(v.ProcessId, answer);
+  // A check that took long says where the time went, for the next time a session is refused.
+  const total = Date.now() - t0;
+  if (total > 5000) {
+    const s = (ms) => `${(ms / 1000).toFixed(1)} s`;
+    const steps = v.Ms ? ` (${Object.entries(v.Ms).map(([k, ms]) => `${k} ${s(ms)}`).join(', ')})` : '';
+    log(`slow check for client :${remotePort}${pid ? ` (pid ${pid})` : ''}: ${s(total)}; finding the program ${s(tPid)}, `
+      + `the check ${s(tCheck)}${v.Error ? ` [${v.Error}]` : steps}, signatures ${s(tSig)}`);
+  }
   return answer;
 }
 
@@ -679,7 +724,11 @@ function notify(answer) {
   slowWorker.ask(`toast ${JSON.stringify(toast)}`, 30000).catch(() => {});
 }
 
-// Check the running claude.exe programs now, so the first session doesn't wait.
+// Check the running Claude Code programs now and every 5 minutes, so the first
+// session of a newly updated Claude Code doesn't wait for its signature check
+// (seconds normally, much longer on a busy computer, past the session's own
+// 60 s). Signatures already known cost nothing.
+setInterval(() => { if (!ALLOW_ANY) warmUp(); }, 5 * 60000).unref();
 function warmUp() {
   slowWorker.ask('paths', 60000)
     .then((r) => { for (const p of [].concat((r && r.Paths) || [])) signedByAnthropic(p); })

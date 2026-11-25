@@ -98,6 +98,26 @@ export function processTable() {
   return table;
 }
 
+// Only this process and its parents. Asking ps for every program's full
+// command line reads each one's memory, which on a busy Mac can take long
+// enough to time the broker's check out.
+export function processTableFor(pid) {
+  const parent = new Map();
+  for (const line of String(run('/bin/ps', ['-axo', 'pid=,ppid=']).stdout || '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (m) parent.set(Number(m[1]), Number(m[2]));
+  }
+  const pids = [];
+  for (let p = pid; p > 0 && pids.length < 12 && !pids.includes(p) && parent.has(p); p = parent.get(p)) pids.push(p);
+  if (!pids.length) return processTable();
+  const list = pids.join(',');
+  const stat = run('/bin/ps', ['-ww', '-o', 'pid=,ppid=,lstart=,comm=', '-p', list]);
+  const args = run('/bin/ps', ['-ww', '-o', 'pid=,args=', '-p', list]);
+  const table = parsePs(stat.stdout || '', args.stdout || '');
+  for (const p of table.values()) p.exePath = p.exe.startsWith('/') ? p.exe : '';
+  return table;
+}
+
 export function exePath(p) {
   if (!p) return '';
   if (p.exePath) return p.exePath;
@@ -255,7 +275,9 @@ function shortCommand(p) {
 
 const SHELLS = /^\/(usr\/)?bin\/(sh|bash|zsh|dash|env)$/;
 
-export function connectionInfo(pid, table = processTable(), extraRoots = []) {
+// session: false leaves out the chat's title and folder (the broker looks them
+// up after it has decided, so reading the app's session files never slows the check).
+export function connectionInfo(pid, table = processTable(), extraRoots = [], { session = true } = {}) {
   const chain = ancestry(table, pid);
   const self = chain[0] || null;
   const name = self ? self.name : `pid ${pid}`;
@@ -282,7 +304,7 @@ export function connectionInfo(pid, table = processTable(), extraRoots = []) {
       Lines: ['Allow once: your Claude sessions then get in without asking', `Until Chrome closes. node, pid ${pid}`],
       Hint: 'Allow. This is the Tether broker.' });
   } else if (claudeAt >= 0) {
-    const s = claudeSession(chain[claudeAt], extraRoots);
+    const s = session ? claudeSession(chain[claudeAt], extraRoots) : emptySession();
     info.Session = s;
     let where = s.Folder || 'folder unknown';
     if (s.Account) where = `${where} (${s.Account})`;
@@ -411,17 +433,42 @@ export function parseLsof(text) {
   return out;
 }
 
+// "netstat -anv -p tcp": every TCP socket with the program that owns it
+// ("node:8629"), from one question to the kernel. lsof has to look through
+// every program's open files, which on a busy Mac takes seconds or fails, and
+// then a real Claude session was refused ("connection not found").
+export function parseNetstat(text) {
+  const out = [];
+  const re = /^tcp[46]\s+\d+\s+\d+\s+(\S+)\.(\d+)\s+(\S+)\.(\d+)\s+(\S+)\s.*?:(\d+)\s+[0-9a-f]{5}\s+[0-9a-f]{8}\s/i;
+  for (const line of String(text).split('\n')) {
+    const m = re.exec(line);
+    if (m) out.push({ pid: Number(m[6]), localAddr: m[1], localPort: Number(m[2]), remoteAddr: m[3], remotePort: Number(m[4]), state: m[5] });
+  }
+  return out;
+}
+
+// Established connections to or from this port; null when it couldn't be
+// looked up just now (an empty list means there are none).
 export function connectionsOn(port) {
-  return parseLsof(run('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn']).stdout || '');
+  const ns = run('/usr/sbin/netstat', ['-anv', '-p', 'tcp'], 10000);
+  if (ns.status === 0 && /process:pid/.test(ns.stdout || '')) {
+    return parseNetstat(ns.stdout).filter((c) => c.state === 'ESTABLISHED' && (c.localPort === port || c.remotePort === port));
+  }
+  // an older macOS without the program column
+  const r = run('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn']);
+  if (r.error || r.signal) return null;
+  return parseLsof(r.stdout || '');
 }
 
 // Programs on this computer connected to this port: the client ends.
 export function clientsOf(port) {
-  return connectionsOn(port).filter((c) => c.remotePort === port && LOOPBACK.has(c.remoteAddr));
+  const all = connectionsOn(port);
+  return all && all.filter((c) => c.remotePort === port && LOOPBACK.has(c.remoteAddr));
 }
 
 export function pidOfClient(clientPort, serverPort) {
-  const c = connectionsOn(clientPort).find((x) => x.localPort === clientPort && x.remotePort === serverPort && LOOPBACK.has(x.remoteAddr));
+  const c = (connectionsOn(clientPort) || [])
+    .find((x) => x.localPort === clientPort && x.remotePort === serverPort && LOOPBACK.has(x.remoteAddr));
   return c ? c.pid : 0;
 }
 
@@ -470,13 +517,21 @@ export function showToast(info, logFile) {
 
 // ------------------------------------------------------------------ the broker's questions
 
-// knownPid: the broker already found the process (lsof), so don't look again.
-export function verifyAnswer(clientPort, serverPort, signatures, extraRoots = [], knownPid = 0) {
+// knownPid: the broker already found the process, so don't look again.
+// quick: only the process and its parents, and no chat name (the broker's
+// "check"); Ms says how long each step took.
+export function verifyAnswer(clientPort, serverPort, signatures, extraRoots = [], knownPid = 0, quick = false) {
   const answer = { Allowed: false, Reason: 'connection not found', Label: `client :${clientPort}`, Kind: '', Program: '', ProcessId: 0,
     Chain: '', Session: '', Folder: '', ClaudePath: '', AppPath: '', ClaudePid: 0, Title: '' };
+  const t0 = Date.now();
   const pid = knownPid > 0 ? knownPid : pidOfClient(clientPort, serverPort);
+  const t1 = Date.now();
+  answer.Ms = { find: t1 - t0 };
   if (!pid) return answer;
-  const info = connectionInfo(pid, processTable(), extraRoots);
+  const table = quick ? processTableFor(pid) : processTable();
+  const t2 = Date.now();
+  const info = connectionInfo(pid, table, extraRoots, { session: !quick });
+  answer.Ms = { find: t1 - t0, processes: t2 - t1, chain: Date.now() - t2 };
   const v = clientAllowed(info, signatures);
   Object.assign(answer, { Allowed: v.Allowed, Reason: v.Reason, Kind: info.Kind, Program: info.Program, ProcessId: info.ProcessId,
     Chain: info.Chain, ClaudePath: info.ClaudePath, AppPath: info.AppPath, ClaudePid: info.ClaudePid,
@@ -492,7 +547,7 @@ export function verifyAnswer(clientPort, serverPort, signatures, extraRoots = []
 }
 
 export function sessionAnswer(claudePid, extraRoots = []) {
-  const p = processTable().get(claudePid);
+  const p = processTableFor(claudePid).get(claudePid);
   const s = p ? claudeSession(p, extraRoots, false) : emptySession();
   return { Title: s.Title, Folder: s.Folder, Id: s.Id };
 }
@@ -574,7 +629,7 @@ async function main() {
       try {
         if (cmd === 'check') {
           const [port, pid] = arg.split(' ').map(Number);
-          out = verifyAnswer(port, serverPort, false, roots, pid || 0);
+          out = verifyAnswer(port, serverPort, false, roots, pid || 0, true);
         } else if (cmd === 'verify') out = verifyAnswer(Number(arg), serverPort, false, roots);
         else if (cmd === 'session') out = sessionAnswer(Number(arg), roots);
         else if (cmd === 'sig') out = { Path: arg, ...signatureOf(arg) };
@@ -596,6 +651,7 @@ async function main() {
     const port = debugPort(chromeData);
     if (!port) { console.log('Chrome remote debugging is not on (no DevToolsActivePort).'); return; }
     const clients = clientsOf(port);
+    if (!clients) { console.log("Couldn't list the connections just now (the Mac may be busy); try again."); return; }
     if (!clients.length) { console.log(`Nothing is connected to Chrome's debugging port (${port}).`); return; }
     const table = processTable();
     const done = new Set();
@@ -631,7 +687,7 @@ async function watch(chromeData, logFile, roots, intervalMs) {
   logLine(logFile, `watching (pid ${process.pid})`);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let port = 0;
-  let seen = new Set();
+  let seen = new Map();   // client port -> when it was last seen
   let baseline = true;
   let portReadAt = 0;
   const lastToast = new Map();
@@ -640,21 +696,26 @@ async function watch(chromeData, logFile, roots, intervalMs) {
       if (Date.now() - portReadAt >= 5000) {
         const p = debugPort(chromeData);
         if (p !== port) {
-          seen = new Set();
+          seen = new Map();
           baseline = true;
           if (p) logLine(logFile, `Chrome debugging port ${p}`);
         }
         port = p;
         portReadAt = Date.now();
       }
-      if (port) {
-        const clients = clientsOf(port);
-        const now = new Set(clients.map((c) => c.localPort));
+      // On a busy Mac a lookup can come back empty or half done. A connection
+      // is only "new" if it wasn't there in the last 30 s, and a program that
+      // couldn't be looked up is tried again rather than called unknown (the
+      // broker's own connection was logged as "Unknown program" that way).
+      const clients = port ? clientsOf(port) : null;
+      if (clients) {
         const fresh = clients.filter((c) => !seen.has(c.localPort));
+        for (const c of clients) if (seen.has(c.localPort)) seen.set(c.localPort, Date.now());
         if (fresh.length) {
           const table = processTable();
           for (const c of fresh) {
-            seen.add(c.localPort);
+            if (!table.has(c.pid)) continue;
+            seen.set(c.localPort, Date.now());
             const info = connectionInfo(c.pid, table, roots);
             if (baseline) { logLine(logFile, `already connected (chrome): ${formatInfo(info)}`); continue; }
             logLine(logFile, `new connection (chrome): ${formatInfo(info)}`);
@@ -664,7 +725,7 @@ async function watch(chromeData, logFile, roots, intervalMs) {
             showToast(info, logFile);
           }
         }
-        for (const k of [...seen]) if (!now.has(k)) seen.delete(k);
+        for (const [k, at] of [...seen]) if (Date.now() - at > 30000) seen.delete(k);
         baseline = false;
       }
     } catch (e) {
