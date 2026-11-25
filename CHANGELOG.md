@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 (2026-11-25)
+
+The first release since 0.3.0: it also has everything in 0.3.1, 0.3.2 and 0.3.3 ([CHANGELOG.md](https://github.com/shakaibarsalan/tether/blob/main/CHANGELOG.md): the tab marker that no longer misses the extension, the broker's quick identity check, a chat working only in its own tabs, Claude's cursor that follows only Claude). After updating: reload the Tether extension (1.1.2) in `chrome://extensions` in each Chrome profile, and restart the broker (`scripts/broker-setup.ps1 -Restart` or `scripts/broker-setup.sh --restart`); Chrome asks "Allow?" once.
 
 Found on a real Mac with the Claude desktop app (CI has none):
 
