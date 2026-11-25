@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.5 (2026-11-25)
+
+After updating: restart the broker (`scripts/broker-setup.ps1 -Restart` or `scripts/broker-setup.sh --restart`; Chrome asks "Allow?" once). The extension is unchanged (1.1.2). If you loaded it from a folder other than this copy's `extension` folder, add its ID from `chrome://extensions` to `"extensionIds"` in `~/.tether/config.json`.
 
 - **Claude's tabs in a profile without your logins or the extension:** a chat's first tab opened in Chrome's default profile, which needn't be the one you use: a new window, not signed in, the old orange frame instead of the extension's look, and Chrome brought to the front. Now the broker opens Claude's tabs in the profile where the Tether extension is loaded. It knows the extension by its ID (Chrome makes an unpacked extension's ID from its folder's path; the broker works it out for its own `extension` folder, and takes more from `"extensionIds"` in `~/.tether/config.json`), and finds its profile when the extension's service worker runs there or the extension answers in a tab. A chat whose tabs are in a profile without the extension moves to that one for its next tab. With no such profile, nothing changes. `broker.log` says which profile a chat's tabs go to.
 - **The same site opened again and again:** which tabs a chat opened was kept only in the broker's memory, so after a broker restart the chat's own tabs were "not yours" and it opened new ones. The broker now keeps it in `~/.tether/broker-chats.json` for the same Chrome run (only chats whose Claude Code process still runs come back; a new Chrome run starts afresh).
