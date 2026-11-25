@@ -234,6 +234,7 @@ class ConnectWatchLogicTest(unittest.TestCase):
         out = node_eval("console.log(JSON.stringify(w.CLAUDE_APP_ID));")
         self.assertEqual(out, "com.anthropic.claudefordesktop")
 
+    @unittest.skipUnless(MAC, "macOS file names (Icon\\r) and attributes")
     def test_only_a_custom_finder_icon_is_forgiven(self):
         """A launcher copy with a pasted icon: Icon\\r in the bundle root and FinderInfo on the bundle, nothing else."""
         base = tempdir(self)
@@ -498,7 +499,7 @@ class PortMirrorTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.copy))
 
 
-@unittest.skipUnless(NODE, "Node.js needed")
+@unittest.skipUnless(MAC and NODE, "macOS: chmod 0 makes a folder unreadable there, not on Windows")
 class PrivateChromeDataTest(unittest.TestCase):
     def test_debug_port_falls_back_to_the_copy_only_when_chrome_data_is_private(self):
         base = tempdir(self)
