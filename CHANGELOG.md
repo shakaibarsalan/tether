@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **A chat couldn't close its own tabs, or use yours when you said so:** the tab guard knew a chat's tabs by chrome-devtools-mcp's page numbers, which change when the browser or the MCP server reconnects, and a `new_page` that timed out was never recorded, so it refused to select or close tabs the chat had opened itself; you closed them by hand. And its message allowed your tabs only when you'd named that exact tab, so "use my open Chrome" didn't count. With the broker running, the guard now leaves choosing and closing tabs to the broker, which knows a chat's tabs by Chrome's own tab ids (kept across reconnects and restarts) and still refuses navigating, typing into or closing yours. When you tell a chat to use your tabs or your open Chrome, in general or one tab, it picks your tab again right after the broker's "not yours", and the broker lends the chat all your tabs for the rest of the chat; a chat selecting a tab twice without that refusal lends nothing. Without the broker the guard works as before, with the same wording.
+- **`new_page` with `isolatedContext`:** a separate context with none of your sign-ins, left behind as an extra window. The tab guard questions it once and says to leave it out (the broker opens tabs in your signed-in profile); repeating the call means you asked for it.
+- **Tests:** the guard with a broker running (choosing and closing left to it; the repeat passes on your permission; another tab in between doesn't), `isolatedContext` questioned once, and the broker's lending only right after "not yours", then for the rest of the chat. 137 tests.
+
 ## 0.3.5 (2026-11-25)
 
 After updating: restart the broker (`scripts/broker-setup.ps1 -Restart` or `scripts/broker-setup.sh --restart`; Chrome asks "Allow?" once). The extension is unchanged (1.1.2). If you loaded it from a folder other than this copy's `extension` folder, add its ID from `chrome://extensions` to `"extensionIds"` in `~/.tether/config.json`.

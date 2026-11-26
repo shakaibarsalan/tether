@@ -185,8 +185,11 @@ It's a Task Scheduler task for your user, started at login with no window. It on
 When a session connects, chrome-devtools-mcp starts out on whatever tab comes first, often the one you're working in, so Claude's first `navigate_page` or click lands there. The tab guard (`hooks/tab-guard.mjs`, a Claude Code hook) stops that:
 
 - before Claude navigates, clicks or types, it has to open its own tab (`new_page`) or deliberately pick one (`select_page`);
-- picking or closing a tab it didn't open is refused once, with the reason; Claude repeats the call only when you asked for that tab;
+- picking or closing a tab it didn't open is refused once, with the reason; Claude repeats the call only when you asked it to use your tabs (that one, or your open Chrome in general);
+- `new_page` with `isolatedContext` (a separate context with none of your sign-ins, in an extra window) is questioned once;
 - looking (`list_pages`, `take_snapshot`, `take_screenshot`, ...) is never refused.
+
+With the broker running, the broker does the refusing (it knows a chat's own tabs by Chrome's tab ids, also after reconnects and broker restarts), so the guard no longer stops `select_page` or `close_page`, and a chat can always close the tabs it opened. When you tell a chat to use your tabs or your open Chrome, it picks your tab again after the broker's "not yours", and the broker lends it all your tabs for the rest of that chat.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tab-guard.ps1          # install
@@ -209,7 +212,7 @@ The broker also tells the extension which session each tab belongs to: the tab-m
 
 Per chat (one Claude session, across reconnects) the broker also keeps:
 
-- **its own tabs.** The tabs it opened, and tabs those opened. Navigating, clicking, typing into or closing any other tab, i.e. yours, is refused, and the tab marker can't mark it. When you ask Claude to use one of your tabs, the tab guard's confirming second `select_page` lends the chat your tabs for 30 minutes.
+- **its own tabs.** The tabs it opened, and tabs those opened. Navigating, clicking, typing into or closing any other tab, i.e. yours, is refused, and the tab marker can't mark it. When you tell Claude to use your tabs or your open Chrome (one tab or in general), it picks your tab again with `select_page` right after the broker's "not yours", and the broker lends the chat your tabs for the rest of the chat (a chat selecting a tab twice without that refusal lends nothing).
 - **its profile.** New tabs open in the Chrome profile where you loaded the Tether extension (your logins are there, and the groups and "Chrome stays put" work there), not wherever Chrome's default is. The broker knows that profile by the extension's ID, made from the folder you loaded it from; if that's not the `extension` folder of this copy, add its ID (from `chrome://extensions`) to `"extensionIds"` in `~/.tether/config.json`. With no such profile, a chat stays in the profile of its first tab.
 - **its tabs, across a broker restart.** Which tabs a chat opened is kept in `~/.tether/broker-chats.json` for the same Chrome run, so a restarted broker doesn't turn them into "not yours" (the chat then opened the same site again in new tabs).
 - **a beat before each click.** A click waits 220 ms after the mouse moved, so the extension's cursor gets there first.
@@ -303,7 +306,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-130 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
+137 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 

@@ -78,7 +78,7 @@ async function startBroker() {
     for (let k = 0; k < 150 && !replies.has(i); k++) await sleep(30);
     return replies.get(i);
   };
-  return { b, ws, send };
+  return { b, ws, send, port };
 }
 const lastCreate = () => seen.filter((m) => m.method === 'Target.createTarget').at(-1).params;
 const log = () => (fs.existsSync(path.join(tmp, 'broker.log')) ? fs.readFileSync(path.join(tmp, 'broker.log'), 'utf8') : '');
@@ -110,6 +110,9 @@ await sleep(1500);   // saved within a second
 one.b.kill(); one.ws.close();
 await sleep(300);
 let two = await startBroker();
+const adopt = async (port) => (await (await fetch(`http://127.0.0.1:${port}/adopt`, { method: 'POST',
+  body: JSON.stringify({ pid: process.pid, chat: true }) })).json()).lent;
+ok('no lending without a "not yours" first', (await adopt(two.port)) === 0);
 let page = (await two.send('Target.attachToTarget', { targetId: t1, flatten: true })).result.sessionId;
 let nav = await two.send('Page.navigate', { url: 'https://example.com/again' }, page);
 ok('after a broker restart the chat still owns its tab', nav && !nav.error, JSON.stringify(nav && nav.error));
@@ -118,6 +121,15 @@ const theirs = await two.send('Page.navigate', { url: 'https://example.com/' }, 
 ok("...and the user's tab is still not the chat's", theirs && theirs.error && /didn't open/.test(theirs.error.message), JSON.stringify(theirs));
 await two.send('Target.createTarget', { url: 'about:blank' });
 ok('...and its profile is still known', lastCreate().browserContextId === 'your-profile', JSON.stringify(lastCreate()));
+
+// 5b. The user lets the chat use their tabs. Lending only counts right after the
+//     broker told the chat "not yours" (selecting its own tab twice lends nothing).
+ok('right after "not yours", the chat is lent the user\'s tabs', (await adopt(two.port)) === 1);
+const nowOk = await two.send('Page.navigate', { url: 'https://example.com/lent' }, userPage);
+ok("...and may now use the user's tab", nowOk && !nowOk.error, JSON.stringify(nowOk && nowOk.error));
+const closeIt = await two.send('Target.closeTarget', { targetId: 'user-tab' });
+ok('...and close it', closeIt && !closeIt.error, JSON.stringify(closeIt && closeIt.error));
+ok('...and the log says for the rest of the chat', /lent the user's tabs for the rest of the chat/.test(log()));
 
 // 6. A new Chrome run (another port file): the old ids mean nothing.
 two.b.kill(); two.ws.close();

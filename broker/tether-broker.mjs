@@ -67,7 +67,8 @@ const GUARDED = new Set([
   'Input.dispatchDragEvent', 'Input.imeSetComposition', 'DOM.setFileInputFiles',
 ]);
 const NOT_YOURS = "Tether: this is a tab Claude didn't open, so it's the user's. Open your own tab with new_page and work there. "
-  + 'Only if the user asked you to use this tab: select_page it a second time to confirm.';
+  + 'If the user asked you to use their tabs or their open Chrome (this tab, or in general): select_page this tab again to confirm, '
+  + "and the user's tabs are yours to use for the rest of this chat.";
 const CLICK_LEAD_MS = 220;   // a click waits this long after the mouse moved, for the cursor
 const BLOCKED = new Set([
   'Browser.close',                  // would close your whole Chrome
@@ -424,12 +425,14 @@ function forward(client, data) {
     const target = sessionTargets.get(sessionId);
     if (target && !chat.targets.has(target) && (GUARDED.has(msg.method) || marker)) {
       logKeptOut(client, target, msg.method);
+      if (GUARDED.has(msg.method)) chat.refusedAt = Date.now();   // Claude's own action, not the tab marker
       refuse(client, msg, -32000, NOT_YOURS);
       return;
     }
   }
   if (!lent && msg.method === 'Target.closeTarget' && msg.params && !chat.targets.has(msg.params.targetId)) {
     logKeptOut(client, msg.params.targetId, msg.method);
+    chat.refusedAt = Date.now();
     refuse(client, msg, -32000, NOT_YOURS);
     return;
   }
@@ -575,15 +578,26 @@ function claudeInput(client, method, params) {
   return null;
 }
 
-// The tab guard says the user asked this chat to use one of their tabs: lend it
-// the user's tabs for a while. Matched by Claude Code session id or claude pid.
-function adopt({ session, pid, minutes }) {
-  const until = Date.now() + Math.min(Math.max(Number(minutes) || 30, 1), 60) * 60000;
+// The tab guard says the user asked this chat to use their tabs: lend it the
+// user's tabs. Matched by Claude Code session id or claude pid.
+//   chat: true  for the rest of the chat, but only right after the broker told
+//               this chat "not yours" (the message says to confirm only if the
+//               user allowed it; a chat merely selecting its own tab twice
+//               lends nothing);
+//   minutes     for a while (older tab guards).
+const REFUSED_WINDOW_MS = 5 * 60000;
+function adopt({ session, pid, minutes, chat: wholeChat }) {
+  const until = wholeChat ? Number.MAX_SAFE_INTEGER : Date.now() + Math.min(Math.max(Number(minutes) || 30, 1), 60) * 60000;
   let n = 0;
   for (const [key, chat] of chats) {
-    if ((session && chat.cliId === session) || (pid && key === `c${pid}`)) { chat.adoptUntil = until; n++; saveChats(); }
+    if (!((session && chat.cliId === session) || (pid && key === `c${pid}`))) continue;
+    if (wholeChat && Date.now() - (chat.refusedAt || 0) > REFUSED_WINDOW_MS) continue;
+    if (chat.adoptUntil >= until) continue;
+    chat.adoptUntil = until;
+    n++;
+    saveChats();
   }
-  if (n) log(`a chat was lent the user's tabs until ${new Date(until).toTimeString().slice(0, 5)} (the user asked for one)`);
+  if (n) log(`a chat was lent the user's tabs ${wholeChat ? 'for the rest of the chat' : `until ${new Date(until).toTimeString().slice(0, 5)}`} (the user asked)`);
   return n;
 }
 

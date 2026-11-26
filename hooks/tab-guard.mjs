@@ -6,8 +6,18 @@
 // in. Without this guard, Claude's first navigate_page or click lands there.
 //
 // Claude Code runs this before (PreToolUse) and after (PostToolUse) every
-// chrome-devtools tool call, with the call as JSON on stdin. Per session it
-// remembers which tabs Claude opened itself (new_page). Then:
+// chrome-devtools tool call, with the call as JSON on stdin.
+//
+// With the Tether broker running, the broker keeps the user's tabs safe: it
+// knows each chat's own tabs by Chrome's tab id and refuses navigating, typing
+// into or closing any other ("not yours"). This guard then only passes on the
+// user's permission: the same tab chosen again with select_page right after
+// that refusal means the user asked Claude to use their tabs, and the broker
+// lends this chat all of them for the rest of the chat. And it warns once
+// about new_page with isolatedContext (no sign-ins, an extra window).
+//
+// Without the broker, per session it remembers which tabs Claude opened
+// itself (new_page). Then:
 //   - acting on a tab (navigate, click, type, ...) before opening or choosing
 //     one is refused: "open your own tab first";
 //   - choosing or closing a tab Claude didn't open is refused once, with the
@@ -75,12 +85,22 @@ const session = input.session_id || 'unknown';
 const state = load(session);
 const pageId = input.tool_input && Number.isInteger(input.tool_input.pageId) ? input.tool_input.pageId : null;
 
-// The Tether broker lends this chat the user's tabs for a while, after the user
-// asked for one of them. Matched by Claude Code session id or claude.exe pid.
+const BROKER = `http://127.0.0.1:${process.env.TETHER_BROKER_PORT || 9333}`;
+
+// Is the Tether broker running? It knows each chat's own tabs by Chrome's tab
+// id (kept across reconnects and broker restarts) and refuses navigating,
+// typing into or closing any other tab, so this guard leaves that to it.
+async function brokerUp() {
+  try { return (await fetch(`${BROKER}/status`, { signal: AbortSignal.timeout(700) })).ok; } catch { return false; }
+}
+
+// The user asked Claude to use their tabs: the broker lends this chat all of
+// them for the rest of the chat (only right after it told the chat "not
+// yours"). Matched by Claude Code session id or claude pid.
 async function lend() {
   try {
-    await fetch(`http://127.0.0.1:${process.env.TETHER_BROKER_PORT || 9333}/adopt`, {
-      method: 'POST', body: JSON.stringify({ session, pid: process.ppid, minutes: 30 }), signal: AbortSignal.timeout(2000),
+    await fetch(`${BROKER}/adopt`, {
+      method: 'POST', body: JSON.stringify({ session, pid: process.ppid, chat: true }), signal: AbortSignal.timeout(2000),
     });
   } catch { /* no broker: nothing to tell */ }
 }
@@ -105,8 +125,44 @@ if (input.hook_event_name === 'PostToolUse') {
 
 // ---- PreToolUse
 tidy();
-if (tool === 'new_page') process.exit(0);
+const repeated = (what) => {
+  const p = state.pending;
+  return Boolean(p && p.tool === what && p.pageId === pageId && Date.now() - p.at < CONFIRM_MS);
+};
 
+if (tool === 'new_page') {
+  // A separate context has none of the user's sign-ins and leaves another window behind.
+  if (input.tool_input && input.tool_input.isolatedContext && !repeated('new_page-isolated')) {
+    state.pending = { tool: 'new_page-isolated', pageId, at: Date.now() };
+    save(session, state);
+    deny("isolatedContext opens the tab in a separate context with none of the user's sign-ins, and leaves another window behind. "
+      + "Call new_page without it: Tether opens the tab in the user's own signed-in Chrome profile. "
+      + 'Only if the user asked for a separate, signed-out context, call new_page with isolatedContext again.');
+  }
+  if (state.pending && state.pending.tool === 'new_page-isolated') { state.pending = null; save(session, state); }
+  process.exit(0);
+}
+
+if (await brokerUp()) {
+  // The broker decides, by Chrome's own tab ids: choosing a tab changes nothing,
+  // and closing one is refused there unless it's the chat's (so a chat can close
+  // its tabs after a reconnect, or after a new_page that timed out). The same tab
+  // chosen again within two minutes, after the broker said "not yours", is the
+  // confirmation that the user asked Claude to use their tabs.
+  if (tool === 'select_page' && pageId !== null) {
+    if (repeated('select_page')) {
+      state.pending = null;
+      save(session, state);
+      await lend();
+    } else {
+      state.pending = { tool, pageId, at: Date.now() };
+      save(session, state);
+    }
+  }
+  process.exit(0);
+}
+
+// Without the broker: this guard keeps the user's tabs safe by itself.
 if (tool === 'select_page' || tool === 'close_page') {
   if (pageId === null || state.own.includes(pageId)) {
     if (tool === 'select_page') { state.ready = true; save(session, state); }
@@ -124,8 +180,8 @@ if (tool === 'select_page' || tool === 'close_page') {
   state.pending = { tool, pageId, at: Date.now() };
   save(session, state);
   deny(tool === 'select_page'
-    ? `page ${pageId} is a tab you didn't open, and the user may be working in it. Open your own tab with new_page instead. Only if the user explicitly asked you to use this exact tab, call select_page with pageId ${pageId} again.`
-    : `page ${pageId} is a tab you didn't open. Close only your own tabs. Only if the user explicitly asked you to close this one, call close_page with pageId ${pageId} again.`);
+    ? `page ${pageId} is a tab you didn't open, and the user may be working in it. Open your own tab with new_page instead. Only if the user asked you to use their tabs or their open Chrome (this tab, or in general), call select_page with pageId ${pageId} again.`
+    : `page ${pageId} is a tab you didn't open. Close only your own tabs. Only if the user asked you to close this one, call close_page with pageId ${pageId} again.`);
 }
 
 if (ACTS.has(tool) && !state.ready) {
