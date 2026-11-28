@@ -47,9 +47,12 @@ export function guide({ chrome, profiles, note, windows = WINDOWS, repo = REPO }
     for (const p of profiles) {
       lines.push(`  - "${p.name}"${p.email ? ` (${p.email})` : ''}${p.tether ? ': has the Tether extension' : ''}`);
     }
-    const home = profiles.find((p) => p.tether);
-    if (home) {
-      lines.push(`  Your new tabs open in "${home.name}", the profile with the Tether extension. If a site isn't signed in there, tell the user instead of using another profile.`);
+    const homes = profiles.filter((p) => p.tether);
+    if (homes.length === 1) {
+      lines.push(`  Your new tabs open in "${homes[0].name}", the profile with the Tether extension. If a site isn't signed in there, tell the user instead of using another profile.`);
+    } else if (homes.length > 1) {
+      lines.push(`  Your new tabs open in a profile with the Tether extension: the one where it was last active, normally the one used most recently, "${homes[0].name}". `
+        + "If a site isn't signed in there, tell the user instead of using another profile.");
     } else {
       lines.push("  None has the Tether extension, so new tabs open in Chrome's default profile, which may not be signed in. If that happens, "
         + 'ask the user to load the extension (chrome://extensions > Developer mode > Load unpacked > the Tether "extension" folder) in the profile they use.');

@@ -73,7 +73,7 @@ class ChromeProfilesTest(unittest.TestCase):
 
     def test_read_from_chromes_own_files(self):
         out = node_json(f"console.log(JSON.stringify(p.chromeProfiles({{ platform: 'win32', chromeDir: {json.dumps(self.chrome)}, tetherHome: {json.dumps(self.home)} }})));")
-        self.assertEqual(out["profiles"][0], {"dir": "Profile 2", "name": "Xaibridge", "email": "me@example.com", "tether": True})
+        self.assertEqual(out["profiles"][0], {"dir": "Profile 2", "name": "Xaibridge", "email": "me@example.com", "tether": True, "usedAt": 0})
         self.assertEqual([p["tether"] for p in out["profiles"]], [True, False, False])
         self.assertEqual({p["name"] for p in out["profiles"]}, {"Xaibridge", "Person 1", "Work {x}"})
 
@@ -123,6 +123,19 @@ class SessionStartHookTest(unittest.TestCase):
         self.assertIn('"Work {x}" (work@example.com)', text)
         self.assertIn('Your new tabs open in "Xaibridge"', text)
         self.assertNotIn("NOT-FOR-TETHER", text)
+
+    def test_of_several_profiles_with_the_extension_the_most_recently_used_comes_first(self):
+        with open(os.path.join(self.chrome, "Local State")) as h:
+            state = json.load(h)
+        state["profile"]["info_cache"]["Profile 2"]["active_time"] = 1000.5
+        state["profile"]["info_cache"]["Profile 3"]["active_time"] = 2000.5
+        with open(os.path.join(self.chrome, "Local State"), "w") as h:
+            json.dump(state, h)
+        with open(os.path.join(self.chrome, "Profile 3", "Preferences"), "w") as h:
+            json.dump({"extensions": {"settings": {TETHER_ID: {}}}}, h)
+        text = self.run_hook(TETHER_CHROME_DIR=self.chrome)
+        self.assertLess(text.index('"Work {x}"'), text.index('"Xaibridge"'))
+        self.assertIn('normally the one used most recently, "Work {x}"', text)
 
     def test_without_the_extension_anywhere_it_says_what_to_do(self):
         os.remove(os.path.join(self.chrome, "Profile 2", "Secure Preferences"))

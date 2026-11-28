@@ -73,11 +73,15 @@ export function chromeProfiles({ platform = process.platform, tetherHome = TETHE
       note = `Chrome's profile list couldn't be read (${path.join(dir, 'Local State')})`;
     }
   }
+  // Chrome notes when each profile was last used (active_time, in seconds): the
+  // most recent first, so of several profiles with the extension the first is
+  // normally the one the broker opens tabs in (where the extension was last active).
   const profiles = Object.entries(cache || {}).map(([dir, p]) => ({
     dir,
     name: String((p && p.name) || dir),
     email: String((p && p.user_name) || ''),
     tether: withTether.has(dir),
-  })).sort((a, b) => Number(b.tether) - Number(a.tether) || a.name.localeCompare(b.name));
+    usedAt: Number(p && p.active_time) || 0,
+  })).sort((a, b) => Number(b.tether) - Number(a.tether) || b.usedAt - a.usedAt || a.name.localeCompare(b.name));
   return { profiles, note };
 }
