@@ -202,9 +202,10 @@ class BrokerFocusTest(unittest.TestCase):
         # seen on Windows: C:\Drive\tether\extension loaded unpacked is gnjnmlhgeobmcdiceboflhdfehlmjlnd
         digest = hashlib.sha256("C:\\Drive\\tether\\extension".encode("utf-16-le")).hexdigest()[:32]
         self.assertEqual("".join(chr(ord("a") + int(c, 16)) for c in digest), "gnjnmlhgeobmcdiceboflhdfehlmjlnd")
-        src = read(os.path.join(BROKER, "tether-broker.mjs"))
+        src = read(os.path.join(ROOT, "scripts", "lib", "chrome-profiles.mjs"))
         self.assertIn("platform === 'win32' ? 'utf16le' : 'utf8'", src)
         self.assertIn("slice(0, 32).replace(/./g, (c) => String.fromCharCode(97 + parseInt(c, 16)))", src)
+        self.assertIn("import { tetherExtensionIds } from '../scripts/lib/chrome-profiles.mjs'", read(os.path.join(BROKER, "tether-broker.mjs")))
 
 
 if __name__ == "__main__":

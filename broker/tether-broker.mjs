@@ -39,9 +39,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { tetherExtensionIds } from '../scripts/lib/chrome-profiles.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -159,26 +159,14 @@ function loadChats(stamp) {
 // work. Chrome's default for a new tab can be another profile, without your
 // logins or the extension.
 //
-// Chrome names an unpacked extension after its folder: SHA-256 of the path
-// (UTF-16 on Windows, UTF-8 elsewhere), the first 32 hex digits written as the
-// letters a-p. The extension folder next to the broker (and its real path),
-// plus any IDs in ~/.tether/config.json "extensionIds" (another folder, the store).
-function unpackedExtensionId(dir, platform = process.platform) {
-  const bytes = Buffer.from(dir, platform === 'win32' ? 'utf16le' : 'utf8');
-  return createHash('sha256').update(bytes).digest('hex').slice(0, 32).replace(/./g, (c) => String.fromCharCode(97 + parseInt(c, 16)));
-}
-const TETHER_IDS = (() => {
-  const dir = path.resolve(here, '..', 'extension');
-  const dirs = new Set([dir]);
-  try { dirs.add(fs.realpathSync(dir)); } catch { /* no folder */ }
-  const ids = new Set([...dirs].map((d) => unpackedExtensionId(d)));
-  try {
-    for (const id of JSON.parse(fs.readFileSync(path.join(TETHER_HOME, 'config.json'), 'utf8')).extensionIds || []) {
-      if (/^[a-p]{32}$/.test(id)) ids.add(id);
-    }
-  } catch { /* no config */ }
-  return ids;
-})();
+// Tether's extension IDs (scripts/lib/chrome-profiles.mjs: an unpacked
+// extension's ID comes from its folder's path). Written down for
+// tether-chrome-profiles, which says in which Chrome profiles they are.
+const TETHER_IDS = tetherExtensionIds({ tetherHome: TETHER_HOME });
+try {
+  fs.mkdirSync(path.join(TETHER_HOME, 'chrome'), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(TETHER_HOME, 'chrome', 'tether-ids'), `${[...TETHER_IDS].join('\n')}\n`, { mode: 0o600 });
+} catch { /* only the profile list misses it */ }
 
 // Profiles (browser contexts) where the extension was seen: its background
 // worker running there, or its answer in one of their tabs. -> when.

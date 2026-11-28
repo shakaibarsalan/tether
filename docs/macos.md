@@ -50,6 +50,7 @@ Without `--broker`, Chrome asks **Allow?** once per Claude Code session instead.
 | Check it's holding | `scripts\check.ps1 [-Hook]` | `scripts/check.sh [--hook]` |
 | Run the check at session start | add the hook by hand | `scripts/check.sh --install-hook` (`--remove-hook`) |
 | Tab marker | `scripts\tab-marker.ps1 [-Undo]` | `scripts/tab-marker.sh [--undo]` |
+| Session start (what every chat is told) | `scripts\session-start.ps1 [-Undo]` | `scripts/session-start.sh [--undo]` |
 | Tab guard | `scripts\tab-guard.ps1 [-Undo]` | `scripts/tab-guard.sh [--undo]` |
 | Guard hook | `scripts\guard-install.ps1 -DeviceId …` | `scripts/guard-install.sh --device-id …` |
 
@@ -98,6 +99,12 @@ as long as the program's file doesn't change.
   Security > Full Disk Access > +, Cmd+Shift+G, paste its path). Don't give it to
   node: every node script would get your Chrome data. `--status` shows whether
   the copy is there. Rebuilding the program (`--rebuild`) makes macOS ask again.
+  The same script sets up a second small program, `~/.tether/bin/tether-chrome-profiles`
+  (source: `mac/chrome-profiles.c`). Every 30 seconds it takes only the list of
+  your Chrome profiles from `Local State` (folder, name, Google account) and
+  checks which profiles have the Tether extension, and writes that to
+  `~/.tether/chrome/profiles.json` (mode 0600). Give it Full Disk Access too;
+  every Claude session is then told your profiles and where its tabs open.
 - **More accounts with copies of the app** (`Claude 2.app`, `Claude 3.app` started
   with `--user-data-dir`, each with its own icon): the broker accepts them. It
   goes by the signature (Anthropic's Developer ID, identifier

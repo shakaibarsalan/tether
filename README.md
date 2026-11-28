@@ -126,6 +126,7 @@ Every PowerShell command in this README has a macOS twin (`scripts/check.sh`, `s
 ## Daily use
 
 - Ask Claude Code to do browser work as usual. It uses the `chrome-devtools` tools on your real Chrome.
+- **Every session knows this from its start**, a new chat or a fork alike: a SessionStart hook (`hooks/session-start.mjs`, added by the installer or `scripts\session-start.ps1` / `scripts/session-start.sh`) tells it to use Tether's `chrome-devtools` tools and never the Claude in Chrome extension (whose tools it also denies, so no chat asks you to reconnect it), how tabs work, and your Chrome profiles: names, accounts, and which one has the Tether extension, where its tabs open. On a Mac the profile list comes from `tether-chrome-profiles`, set up with the port mirror.
 - **Leaving Claude to work on its own?** Ask it to connect first ("list my open tabs"), click **Allow**, then go.
 - Check the block any time:
   ```powershell
@@ -306,7 +307,7 @@ The guard protects other people from your Claude. **It doesn't stop other comput
 python -m unittest discover -s tests -v
 ```
 
-137 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
+147 tests. The same 13 rules run against both guards, plus the bridge block, the guard installer, the check script, the tab-marker installer, the connect watch, the extension's safety rules (no network, no extra permissions) and the broker's (loopback only, signatures checked, dangerous commands blocked), always on temp copies, never your real hosts file or settings. Each OS runs the ones for it: CI runs them on `windows-latest` and `macos-latest`, the end-to-end tests below on macOS, and a full `./install.sh --broker` and `./uninstall.sh` on a fresh Mac. Pushing a `v*` tag runs all of it and then publishes the release.
 
 Two end-to-end tests run against a throwaway Chrome. Install `npm install --no-save puppeteer-core@24` in the repo and `npm ci` in `broker`, then:
 

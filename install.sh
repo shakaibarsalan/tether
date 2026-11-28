@@ -4,6 +4,9 @@
 #
 #   1. scripts/devtools-setup.sh       Claude Code drives your real Chrome over
 #                                      127.0.0.1 through chrome-devtools-mcp.
+#      scripts/session-start.sh        and every new session is told so at its
+#                                      start (not the Claude in Chrome extension),
+#                                      with your Chrome profiles.
 #   2. scripts/connect-watch-setup.sh  a background watcher (LaunchAgent) that
 #                                      logs the program behind each "Allow?".
 #   3. scripts/broker-setup.sh         with --broker: Chrome asks "Allow?" once
@@ -29,7 +32,7 @@ while [ $# -gt 0 ]; do
     --skip-watch) skip_watch=1 ;;
     --broker) broker=1 ;;
     --skip-block) skip_block=1 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
   shift
@@ -38,6 +41,7 @@ need_macos
 
 if [ "$skip_devtools" = 0 ]; then
   /bin/bash scripts/devtools-setup.sh || die 'DevTools setup failed; the bridge was not blocked.'
+  /bin/bash scripts/session-start.sh || warn 'The session start hook was not added; run scripts/session-start.sh.'
   if [ "$skip_watch" = 0 ]; then
     say ''
     /bin/bash scripts/connect-watch-setup.sh || warn 'The connect watch did not start (the rest of the setup is fine).'

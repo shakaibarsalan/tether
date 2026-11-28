@@ -6,6 +6,7 @@
 //   node claude-settings.mjs tab-guard  [--undo] [--server chrome-devtools] [--node /path/to/node]
 //   node claude-settings.mjs guard      [--undo] [--python /path/to/python3] [--guard /path/to/chrome_browser_guard.py]
 //   node claude-settings.mjs check-hook [--undo] [--script /path/to/check.sh]
+//   node claude-settings.mjs session-start [--undo] [--node /path/to/node]
 //
 //   --claude-dir DIR   instead of ~/.claude (the tests use a temp folder)
 //
@@ -42,7 +43,7 @@ const stamp = () => {
 
 // Every hook entry is { matcher, hooks: [ ... ] }. "mine" says whether an entry
 // was written by this tool, so only those are replaced.
-function update(settingsPath, what, wanted, mine, undo) {
+function update(settingsPath, what, wanted, mine, undo, more = null) {
   let settings = {};
   let backup = null;
   if (fs.existsSync(settingsPath)) {
@@ -63,6 +64,7 @@ function update(settingsPath, what, wanted, mine, undo) {
     if (list.length) hooks[event] = list; else delete hooks[event];
   }
   if (Object.keys(hooks).length) settings.hooks = hooks; else delete settings.hooks;
+  if (more) more(settings);
   const json = `${JSON.stringify(settings, null, 2)}\n`;
   JSON.parse(json); // refuse to write anything unreadable
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -112,6 +114,22 @@ export function checkHook({ claudeDir, script = path.join(REPO, 'scripts', 'chec
   return update(path.join(claudeDir, 'settings.json'), 'tether-check', { SessionStart: entry }, mine, undo);
 }
 
+// What every session should know about the browser here (hooks/session-start.mjs,
+// at the start of each chat), and the Claude in Chrome extension's tools denied,
+// so no chat keeps trying them and asking the user to reconnect.
+const EXTENSION_TOOLS = 'mcp__claude-in-chrome';
+export function sessionStart({ claudeDir, node = process.execPath, undo = false }) {
+  const entry = { hooks: [{ type: 'command', command: node, args: [path.join(REPO, 'hooks', 'session-start.mjs')], timeout: 15 }] };
+  const mine = (e) => anyHook(e, (h) => /hooks[\\/]session-start\.mjs/.test(hookText(h)));
+  return update(path.join(claudeDir, 'settings.json'), 'tether-session-start', { SessionStart: entry }, mine, undo, (settings) => {
+    const perms = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions : {};
+    let deny = Array.isArray(perms.deny) ? perms.deny.filter((r) => r !== EXTENSION_TOOLS) : [];
+    if (!undo) deny = [...deny, EXTENSION_TOOLS];
+    if (deny.length) perms.deny = deny; else delete perms.deny;
+    if (Object.keys(perms).length) settings.permissions = perms; else delete settings.permissions;
+  });
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const args = parseArgs(process.argv.slice(2));
@@ -123,6 +141,7 @@ if (isMain) {
     'tab-guard': () => tabGuard({ claudeDir, server: args.server, node: args.node || process.execPath, undo }),
     guard: () => guard({ claudeDir, python: args.python, guardPath: args.guard, undo }),
     'check-hook': () => checkHook({ claudeDir, script: args.script, undo }),
+    'session-start': () => sessionStart({ claudeDir, node: args.node || process.execPath, undo }),
   };
   if (!jobs[what]) {
     console.error(`usage: claude-settings.mjs ${Object.keys(jobs).join('|')} [--undo] [--claude-dir DIR]`);

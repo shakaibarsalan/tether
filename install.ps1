@@ -42,6 +42,8 @@ $scripts = Join-Path $PSScriptRoot 'scripts'
 if (-not $SkipDevTools) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'devtools-setup.ps1')
     if ($LASTEXITCODE -ne 0) { Write-Host 'DevTools setup failed; the bridge was not blocked.' -ForegroundColor Red; exit 1 }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'session-start.ps1')
+    if ($LASTEXITCODE -ne 0) { Write-Host 'The session start hook was not added; run scripts\session-start.ps1.' -ForegroundColor Yellow }
 
     if (-not $SkipWatch) {
         Write-Host ''

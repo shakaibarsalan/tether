@@ -79,6 +79,9 @@ jobs:
           scripts/check.sh
           scripts/check.sh --install-hook && grep 'scripts/check.sh' ~/.claude/settings.json
           grep -c '__claudeTabMarker' ~/.claude/settings.json   # --broker adds the tab marker (a tab group per chat)
+          grep -c 'hooks/session-start.mjs' ~/.claude/settings.json   # every session told how the browser works here
+          grep -c 'mcp__claude-in-chrome' ~/.claude/settings.json      # ...and the extension's tools denied
+          node hooks/session-start.mjs | grep -q 'chrome-devtools MCP tools'
           scripts/tab-guard.sh && grep -c 'tab-guard.mjs' ~/.claude/settings.json
       - name: A program that isn't Claude gets 403 from the installed broker
         run: |
@@ -111,5 +114,6 @@ jobs:
           gone claude mcp get chrome-devtools
           gone test -d "$HOME/.tether/npm/node_modules/chrome-devtools-mcp"
           gone grep '__claudeTabMarker' ~/.claude/settings.json   # uninstall.sh took the tab marker out
+          gone grep -E 'session-start.mjs|mcp__claude-in-chrome' ~/.claude/settings.json   # and the session start hook
           scripts/check.sh --remove-hook && scripts/tab-guard.sh --undo
           gone grep -E 'tab-guard|check.sh|__claudeTabMarker' ~/.claude/settings.json
